@@ -26,6 +26,14 @@ namespace Chat_Room
 
             Console.WriteLine($"Server started on port {_port}");
             Console.WriteLine("Waiting for clients to connect...");
+            Console.WriteLine("\nServer Commands:");
+            Console.WriteLine("  /broadcast <message> - Send a message to all clients");
+            Console.WriteLine("  /kick <username>     - Disconnect a specific user");
+            Console.WriteLine("  /list                - List all connected users");
+            Console.WriteLine("  /stop                - Stop the server\n");
+
+            // Start server command handler
+            _ = HandleServerCommandsAsync();
 
             while (_isRunning)
             {
@@ -42,6 +50,83 @@ namespace Chat_Room
                     }
                 }
             }
+        }
+
+        private async Task HandleServerCommandsAsync()
+        {
+            await Task.Run(async () =>
+            {
+                while (_isRunning)
+                {
+                    var input = Console.ReadLine();
+                    if (string.IsNullOrWhiteSpace(input)) continue;
+
+                    var parts = input.Split(' ', 2);
+                    var command = parts[0].ToLower();
+
+                    switch (command)
+                    {
+                        case "/broadcast":
+                            if (parts.Length > 1)
+                            {
+                                await BroadcastJsonAsync("server", parts[1], null);
+                                Console.WriteLine($"Broadcast: {parts[1]}");
+                            }
+                            else
+                            {
+                                Console.WriteLine("Usage: /broadcast <message>");
+                            }
+                            break;
+
+                        case "/kick":
+                            if (parts.Length > 1)
+                            {
+                                var username = parts[1].Trim();
+                                if (_clients.TryGetValue(username, out var client))
+                                {
+                                    await SendJsonAsync(client.GetStream(), "server", "You have been kicked from the server.");
+                                    client.Close();
+                                    _clients.TryRemove(username, out _);
+                                    Console.WriteLine($"Kicked user: {username}");
+                                    await BroadcastJsonAsync("server", $"{username} was kicked from the server", null);
+                                }
+                                else
+                                {
+                                    Console.WriteLine($"User '{username}' not found");
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine("Usage: /kick <username>");
+                            }
+                            break;
+
+                        case "/list":
+                            if (_clients.Count > 0)
+                            {
+                                Console.WriteLine($"Connected users ({_clients.Count}):");
+                                foreach (var username in _clients.Keys)
+                                {
+                                    Console.WriteLine($"  - {username}");
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine("No users connected");
+                            }
+                            break;
+
+                        case "/stop":
+                            Console.WriteLine("Stopping server...");
+                            Stop();
+                            break;
+
+                        default:
+                            Console.WriteLine("Unknown command. Available commands: /broadcast, /kick, /list, /stop");
+                            break;
+                    }
+                }
+            });
         }
 
         private async Task HandleClientAsync(TcpClient client)
@@ -121,12 +206,6 @@ namespace Chat_Room
                 await SendJsonAsync(stream, "command", response);
                 Console.WriteLine($"{clientId} requested user list");
             }
-            else if (command == "/clear")
-            {
-                await BroadcastJsonAsync("clear", "", null);
-                Console.WriteLine($"{clientId} cleared the chat");
-                await BroadcastJsonAsync("server", $"Chat cleared by {clientId}", null);
-            }
             else if (command == "/exit")
             {
                 Console.WriteLine($"{clientId} requested disconnect");
@@ -137,7 +216,6 @@ namespace Chat_Room
                 helpText.AppendLine("Available commands:");
                 helpText.AppendLine("  /help  - Show this help message");
                 helpText.AppendLine("  /list  - List all connected users");
-                helpText.AppendLine("  /clear - Clear chat history for all users");
                 helpText.AppendLine("  /say   - Sends a message to the server");
                 helpText.Append("  /exit  - Disconnect from the chat");
                 

@@ -115,12 +115,6 @@ namespace Chat_Room
                         Console.WriteLine($": {message.Body}");
                         break;
 
-                    case "clear":
-                        Console.Clear();
-                        Console.WriteLine("Chat cleared by server.\n");
-                        _currentInput = "";
-                        return;
-
                     default:
                         Console.WriteLine(message.Body);
                         break;
