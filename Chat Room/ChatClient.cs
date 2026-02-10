@@ -10,6 +10,8 @@ namespace Chat_Room
         private NetworkStream? _stream;
         private string _username;
         private bool _isConnected;
+        private string _currentInput = "";
+        private readonly object _consoleLock = new object();
 
         public ChatClient(string username)
         {
@@ -86,35 +88,61 @@ namespace Chat_Room
 
         private void HandleServerMessage(ServerMessage message)
         {
-            switch (message.Type?.ToLower())
+            lock (_consoleLock)
             {
-                case "server":
-                    Console.ForegroundColor = ConsoleColor.Blue;
-                    Console.WriteLine($"[SERVER] {message.Body}");
-                    Console.ResetColor();
-                    break;
+                // Clear the current input line
+                ClearCurrentLine();
 
-                case "command":
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.WriteLine(message.Body);
-                    Console.ResetColor();
-                    break;
+                // Display the incoming message
+                switch (message.Type?.ToLower())
+                {
+                    case "server":
+                        Console.ForegroundColor = ConsoleColor.Blue;
+                        Console.WriteLine($"[SERVER] {message.Body}");
+                        Console.ResetColor();
+                        break;
 
-                case "message":
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    Console.Write(message.Username);
-                    Console.ResetColor();
-                    Console.WriteLine($": {message.Body}");
-                    break;
+                    case "command":
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.WriteLine(message.Body);
+                        Console.ResetColor();
+                        break;
 
-                case "clear":
-                    Console.Clear();
-                    Console.WriteLine("Chat cleared by server.\n");
-                    break;
+                    case "message":
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.Write(message.Username);
+                        Console.ResetColor();
+                        Console.WriteLine($": {message.Body}");
+                        break;
 
-                default:
-                    Console.WriteLine(message.Body);
-                    break;
+                    case "clear":
+                        Console.Clear();
+                        Console.WriteLine("Chat cleared by server.\n");
+                        _currentInput = "";
+                        return;
+
+                    default:
+                        Console.WriteLine(message.Body);
+                        break;
+                }
+
+                // Restore the current input line
+                RestoreCurrentLine();
+            }
+        }
+
+        private void ClearCurrentLine()
+        {
+            // Move cursor to beginning of line and clear it
+            Console.Write("\r" + new string(' ', Console.BufferWidth - 1) + "\r");
+        }
+
+        private void RestoreCurrentLine()
+        {
+            // Redraw the current input
+            if (!string.IsNullOrEmpty(_currentInput))
+            {
+                Console.Write(_currentInput);
             }
         }
 
@@ -157,10 +185,13 @@ namespace Chat_Room
                 // Only display [you] tag for regular messages, not commands
                 if (command == "/say")
                 {
-                    Console.ForegroundColor = ConsoleColor.Magenta;
-                    Console.Write("[you]");
-                    Console.ResetColor();
-                    Console.WriteLine($": {body}");
+                    lock (_consoleLock)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Magenta;
+                        Console.Write("[you]");
+                        Console.ResetColor();
+                        Console.WriteLine($": {body}");
+                    }
                 }
             }
             catch (Exception ex)
@@ -174,7 +205,47 @@ namespace Chat_Room
         {
             while (_isConnected)
             {
-                var message = Console.ReadLine();
+                _currentInput = "";
+                
+                // Read input character by character
+                ConsoleKeyInfo keyInfo;
+                while (_isConnected)
+                {
+                    if (!Console.KeyAvailable)
+                    {
+                        await Task.Delay(10);
+                        continue;
+                    }
+
+                    keyInfo = Console.ReadKey(intercept: true);
+
+                    lock (_consoleLock)
+                    {
+                        if (keyInfo.Key == ConsoleKey.Enter)
+                        {
+                            Console.WriteLine();
+                            break;
+                        }
+                        else if (keyInfo.Key == ConsoleKey.Backspace)
+                        {
+                            if (_currentInput.Length > 0)
+                            {
+                                _currentInput = _currentInput.Substring(0, _currentInput.Length - 1);
+                                Console.Write("\b \b");
+                            }
+                        }
+                        else if (!char.IsControl(keyInfo.KeyChar))
+                        {
+                            _currentInput += keyInfo.KeyChar;
+                            Console.Write(keyInfo.KeyChar);
+                        }
+                    }
+                }
+
+                if (!_isConnected)
+                    break;
+
+                var message = _currentInput.Trim();
                 
                 if (string.IsNullOrWhiteSpace(message))
                     continue;

@@ -138,6 +138,7 @@ namespace Chat_Room
                 helpText.AppendLine("  /help  - Show this help message");
                 helpText.AppendLine("  /list  - List all connected users");
                 helpText.AppendLine("  /clear - Clear chat history for all users");
+                helpText.AppendLine("  /say   - Sends a message to the server");
                 helpText.Append("  /exit  - Disconnect from the chat");
                 
                 await SendJsonAsync(stream, "command", helpText.ToString());
