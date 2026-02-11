@@ -4,5 +4,6 @@ namespace Chat_Room
     {
         public string? Command { get; set; }
         public string? Body { get; set; }
+        public string? Password { get; set; }
     }
 }

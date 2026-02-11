@@ -11,6 +11,7 @@ namespace Chat_Room
     {
         private TcpListener? _listener;
         private readonly ConcurrentDictionary<string, TcpClient> _clients = new();
+        private readonly UserManager _userManager = new();
         private bool _isRunning;
         private int _port;
         private string _currentInput = "";
@@ -28,14 +29,17 @@ namespace Chat_Room
             _isRunning = true;
 
             Console.WriteLine($"Server started on port {_port}");
+            Console.WriteLine($"Total registered users: {_userManager.GetTotalUsers()}");
             Console.WriteLine("Waiting for clients to connect...");
-            Console.WriteLine("\nServer Commands:");
+            Console.WriteLine("Type /help for a list of server commands\n");
+            Console.WriteLine("Server Commands:");
             Console.WriteLine("  /broadcast <message> - Send a message to all clients");
             Console.WriteLine("  /say <message>       - Send a message to all clients (appears as chat message)");
             Console.WriteLine("  /msg <username> <message> - Send a private message to a specific user");
             Console.WriteLine("  /kick <username>     - Disconnect a specific user");
             Console.WriteLine("  /list                - List all connected users");
-            Console.WriteLine("  /stop                - Stop the server\n");
+            Console.WriteLine("  /stop                - Stop the server");
+            Console.WriteLine("  /help                - List all available commands\n");
 
             // Start server command handler
             _ = HandleServerCommandsAsync();
@@ -282,6 +286,87 @@ namespace Chat_Room
                             }
                             break;
 
+                        case "/help":
+                            lock (_consoleLock)
+                            {
+                                Console.ForegroundColor = ConsoleColor.Cyan;
+                                Console.WriteLine("\nAvailable Server Commands:");
+                                Console.WriteLine("  /help                     - Show this help message");
+                                Console.WriteLine("  /broadcast <message>      - Send a server announcement to all clients");
+                                Console.WriteLine("  /say <message>            - Send a chat message as SERVER");
+                                Console.WriteLine("  /msg <username> <message> - Send a private message to a specific user");
+                                Console.WriteLine("  /kick <username>          - Disconnect a specific user");
+                                Console.WriteLine("  /list                     - List all connected users");
+                                Console.WriteLine("  /users                    - List all registered users with statistics");
+                                Console.WriteLine("  /stats <username>         - Show detailed stats for a specific user");
+                                Console.WriteLine("  /stop                     - Stop the server");
+                                Console.ResetColor();
+                            }
+                            break;
+
+                        case "/users":
+                            lock (_consoleLock)
+                            {
+                                var allUsers = _userManager.GetAllUsers();
+                                if (allUsers.Count > 0)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Cyan;
+                                    Console.WriteLine($"\nRegistered users ({allUsers.Count}):");
+                                    Console.WriteLine($"{"Username",-20} {"Messages",-10} {"Last Login",-20}");
+                                    Console.WriteLine(new string('-', 50));
+                                    foreach (var user in allUsers.OrderByDescending(u => u.MessageCount))
+                                    {
+                                        var status = _clients.ContainsKey(user.Username) ? " (online)" : "";
+                                        Console.WriteLine($"{user.Username + status,-20} {user.MessageCount,-10} {user.LastLogin:yyyy-MM-dd HH:mm}");
+                                    }
+                                    Console.ResetColor();
+                                }
+                                else
+                                {
+                                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                                    Console.WriteLine("No registered users");
+                                    Console.ResetColor();
+                                }
+                            }
+                            break;
+
+                        case "/stats":
+                            if (parts.Length > 1)
+                            {
+                                var username = parts[1].Trim();
+                                var account = _userManager.GetUserAccount(username);
+                                
+                                lock (_consoleLock)
+                                {
+                                    if (account != null)
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.Cyan;
+                                        Console.WriteLine($"\nStatistics for {username}:");
+                                        Console.WriteLine($"  Total messages: {account.MessageCount}");
+                                        Console.WriteLine($"  Account created: {account.CreatedDate:yyyy-MM-dd HH:mm:ss}");
+                                        Console.WriteLine($"  Last login: {account.LastLogin:yyyy-MM-dd HH:mm:ss}");
+                                        Console.WriteLine($"  Currently online: {(_clients.ContainsKey(username) ? "Yes" : "No")}");
+                                        Console.ResetColor();
+                                    }
+                                    else
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.Red;
+                                        Console.WriteLine($"User '{username}' not found");
+                                        Console.ResetColor();
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                lock (_consoleLock)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine("Usage: /stats <username>");
+                                    Console.ResetColor();
+                                }
+                            }
+                            break;
+
                         case "/stop":
                             lock (_consoleLock)
                             {
@@ -296,7 +381,7 @@ namespace Chat_Room
                             lock (_consoleLock)
                             {
                                 Console.ForegroundColor = ConsoleColor.Red;
-                                Console.WriteLine("Unknown command. Available commands: /broadcast, /say, /msg, /kick, /list, /stop");
+                                Console.WriteLine("Unknown command. Type /help for available commands.");
                                 Console.ResetColor();
                             }
                             break;
@@ -328,30 +413,125 @@ namespace Chat_Room
                 stream = client.GetStream();
                 var buffer = new byte[4096];
                 
-                // Read the initial username
+                // Read authentication message
                 var bytesRead = await stream.ReadAsync(buffer);
                 if (bytesRead == 0) return;
 
-                clientId = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
+                var authJson = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
                 
-                // Validate username
-                if (string.IsNullOrWhiteSpace(clientId))
+                try
                 {
-                    await SendJsonAsync(stream, "server", "Invalid username. Connection rejected.");
+                    var authMessage = JsonSerializer.Deserialize<ClientMessage>(authJson);
+                    
+                    if (authMessage == null || string.IsNullOrWhiteSpace(authMessage.Body))
+                    {
+                        await SendJsonAsync(stream, "server", "Invalid authentication format.");
+                        client.Close();
+                        return;
+                    }
+
+                    clientId = authMessage.Body.Trim();
+                    var password = authMessage.Password ?? "";
+                    var isRegister = authMessage.Command?.ToLower() == "register";
+
+                    // Validate username
+                    if (string.IsNullOrWhiteSpace(clientId))
+                    {
+                        await SendJsonAsync(stream, "server", "Invalid username. Connection rejected.");
+                        client.Close();
+                        return;
+                    }
+
+                    // Handle registration
+                    if (isRegister)
+                    {
+                        if (_userManager.UserExists(clientId))
+                        {
+                            await SendJsonAsync(stream, "server", "Username already exists. Please login instead.");
+                            client.Close();
+                            lock (_consoleLock)
+                            {
+                                ClearCurrentLine();
+                                Console.ForegroundColor = ConsoleColor.Red;
+                                Console.WriteLine($"[Registration Failed] Username '{clientId}' already exists");
+                                Console.ResetColor();
+                                RestoreCurrentLine();
+                            }
+                            return;
+                        }
+
+                        if (_userManager.RegisterUser(clientId, password))
+                        {
+                            await SendJsonAsync(stream, "server", "Registration successful! You are now logged in.");
+                            lock (_consoleLock)
+                            {
+                                ClearCurrentLine();
+                                Console.ForegroundColor = ConsoleColor.Green;
+                                Console.WriteLine($"[Registered] {clientId}");
+                                Console.ResetColor();
+                                RestoreCurrentLine();
+                            }
+                        }
+                        else
+                        {
+                            await SendJsonAsync(stream, "server", "Registration failed.");
+                            client.Close();
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        // Handle login
+                        if (!_userManager.UserExists(clientId))
+                        {
+                            await SendJsonAsync(stream, "server", "Username not found. Please register first.");
+                            client.Close();
+                            lock (_consoleLock)
+                            {
+                                ClearCurrentLine();
+                                Console.ForegroundColor = ConsoleColor.Red;
+                                Console.WriteLine($"[Login Failed] Username '{clientId}' not found");
+                                Console.ResetColor();
+                                RestoreCurrentLine();
+                            }
+                            return;
+                        }
+
+                        if (!_userManager.AuthenticateUser(clientId, password))
+                        {
+                            await SendJsonAsync(stream, "server", "Incorrect password. Connection rejected.");
+                            client.Close();
+                            lock (_consoleLock)
+                            {
+                                ClearCurrentLine();
+                                Console.ForegroundColor = ConsoleColor.Red;
+                                Console.WriteLine($"[Login Failed] Incorrect password for '{clientId}'");
+                                Console.ResetColor();
+                                RestoreCurrentLine();
+                            }
+                            return;
+                        }
+
+                        await SendJsonAsync(stream, "server", "Login successful!");
+                    }
+                }
+                catch (JsonException)
+                {
+                    await SendJsonAsync(stream, "server", "Invalid authentication format.");
                     client.Close();
                     return;
                 }
                 
-                // Check for duplicate username
+                // Check for duplicate connection
                 if (_clients.ContainsKey(clientId))
                 {
-                    await SendJsonAsync(stream, "server", $"Username '{clientId}' is already taken. Connection rejected.");
+                    await SendJsonAsync(stream, "server", $"Username '{clientId}' is already connected. Connection rejected.");
                     client.Close();
                     lock (_consoleLock)
                     {
                         ClearCurrentLine();
                         Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine($"[Connection Rejected] Username '{clientId}' already in use");
+                        Console.WriteLine($"[Connection Rejected] Username '{clientId}' already connected");
                         Console.ResetColor();
                         RestoreCurrentLine();
                     }
@@ -360,11 +540,12 @@ namespace Chat_Room
                 
                 if (_clients.TryAdd(clientId, client))
                 {
+                    var account = _userManager.GetUserAccount(clientId);
                     lock (_consoleLock)
                     {
                         ClearCurrentLine();
                         Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine($"[Connected] {clientId}");
+                        Console.WriteLine($"[Connected] {clientId} (Messages: {account?.MessageCount ?? 0})");
                         Console.ResetColor();
                         RestoreCurrentLine();
                     }
@@ -416,11 +597,12 @@ namespace Chat_Room
             {
                 if (clientId != null && _clients.TryRemove(clientId, out _))
                 {
+                    var account = _userManager.GetUserAccount(clientId);
                     lock (_consoleLock)
                     {
                         ClearCurrentLine();
                         Console.ForegroundColor = ConsoleColor.DarkYellow;
-                        Console.WriteLine($"[Disconnected] {clientId}");
+                        Console.WriteLine($"[Disconnected] {clientId} (Total Messages: {account?.MessageCount ?? 0})");
                         Console.ResetColor();
                         RestoreCurrentLine();
                     }
@@ -437,6 +619,7 @@ namespace Chat_Room
 
             if (command == "/say")
             {
+                _userManager.IncrementMessageCount(clientId);
                 lock (_consoleLock)
                 {
                     ClearCurrentLine();
@@ -474,6 +657,7 @@ namespace Chat_Room
                         
                         if (_clients.TryGetValue(targetUsername, out var targetClient))
                         {
+                            _userManager.IncrementMessageCount(clientId);
                             await SendJsonAsync(targetClient.GetStream(), "private", privateMessage, clientId);
                             // Play notification sound for private message
                             Console.Beep(800, 100);
@@ -542,7 +726,16 @@ namespace Chat_Room
             }
             else if (command == "/whoami")
             {
-                await SendJsonAsync(stream, "command", $"You are logged in as: {clientId}");
+                var account = _userManager.GetUserAccount(clientId);
+                var stats = new StringBuilder();
+                stats.AppendLine($"You are logged in as: {clientId}");
+                if (account != null)
+                {
+                    stats.AppendLine($"Total messages sent: {account.MessageCount}");
+                    stats.AppendLine($"Account created: {account.CreatedDate:yyyy-MM-dd HH:mm:ss}");
+                    stats.Append($"Last login: {account.LastLogin:yyyy-MM-dd HH:mm:ss}");
+                }
+                await SendJsonAsync(stream, "command", stats.ToString());
                 lock (_consoleLock)
                 {
                     ClearCurrentLine();
@@ -556,6 +749,7 @@ namespace Chat_Room
             {
                 if (!string.IsNullOrWhiteSpace(message.Body))
                 {
+                    _userManager.IncrementMessageCount(clientId);
                     var actionMessage = $"* {clientId} {message.Body}";
                     await BroadcastJsonAsync("action", actionMessage, null);
                     lock (_consoleLock)

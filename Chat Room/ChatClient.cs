@@ -9,27 +9,65 @@ namespace Chat_Room
         private TcpClient? _client;
         private NetworkStream? _stream;
         private string _username;
+        private string _password;
         private bool _isConnected;
         private string _currentInput = "";
         private readonly object _consoleLock = new object();
 
-        public ChatClient(string username)
+        public ChatClient(string username, string password)
         {
             _username = username;
+            _password = password;
         }
 
-        public async Task ConnectAsync(string serverIp, int port = 5000)
+        public async Task ConnectAsync(string serverIp, int port, bool isRegister)
         {
             try
             {
                 _client = new TcpClient();
                 await _client.ConnectAsync(serverIp, port);
                 _stream = _client.GetStream();
-                _isConnected = true;
 
-                // Send username to server
-                var usernameBytes = Encoding.UTF8.GetBytes(_username);
-                await _stream.WriteAsync(usernameBytes);
+                // Send authentication message
+                var authMessage = new ClientMessage
+                {
+                    Command = isRegister ? "register" : "login",
+                    Body = _username,
+                    Password = _password
+                };
+
+                var jsonString = JsonSerializer.Serialize(authMessage);
+                var jsonBytes = Encoding.UTF8.GetBytes(jsonString);
+                await _stream.WriteAsync(jsonBytes);
+
+                // Wait for authentication response
+                var buffer = new byte[4096];
+                var bytesRead = await _stream.ReadAsync(buffer);
+                if (bytesRead > 0)
+                {
+                    var response = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
+                    var serverMessage = JsonSerializer.Deserialize<ServerMessage>(response);
+                    
+                    if (serverMessage?.Type == "server")
+                    {
+                        Console.ForegroundColor = ConsoleColor.Blue;
+                        Console.WriteLine($"[SERVER] {serverMessage.Body}");
+                        Console.ResetColor();
+                        
+                        if (serverMessage.Body?.Contains("rejected") == true || 
+                            serverMessage.Body?.Contains("failed") == true ||
+                            serverMessage.Body?.Contains("not found") == true ||
+                            serverMessage.Body?.Contains("Incorrect password") == true ||
+                            serverMessage.Body?.Contains("already exists") == true)
+                        {
+                            _isConnected = false;
+                            _client.Close();
+                            return;
+                        }
+                    }
+                }
+
+                _isConnected = true;
 
                 Console.WriteLine($"Connected to server at {serverIp}:{port}");
                 Console.WriteLine("Type your messages and press Enter to send.");
