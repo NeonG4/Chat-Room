@@ -115,6 +115,28 @@ namespace Chat_Room
                         Console.WriteLine($": {message.Body}");
                         break;
 
+                    case "private":
+                        Console.ForegroundColor = ConsoleColor.Cyan;
+                        Console.Write($"[PM from {message.Username}]");
+                        Console.ResetColor();
+                        Console.WriteLine($": {message.Body}");
+                        // Play notification sound for incoming PM
+                        try { Console.Beep(800, 100); } catch { }
+                        break;
+
+                    case "privatesent":
+                        Console.ForegroundColor = ConsoleColor.Cyan;
+                        Console.Write($"[PM to {message.Username}]");
+                        Console.ResetColor();
+                        Console.WriteLine($": {message.Body}");
+                        break;
+
+                    case "action":
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.WriteLine(message.Body);
+                        Console.ResetColor();
+                        break;
+
                     default:
                         Console.WriteLine(message.Body);
                         break;

@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace Chat_Room
 {
@@ -28,6 +29,8 @@ namespace Chat_Room
             Console.WriteLine("Waiting for clients to connect...");
             Console.WriteLine("\nServer Commands:");
             Console.WriteLine("  /broadcast <message> - Send a message to all clients");
+            Console.WriteLine("  /say <message>       - Send a message to all clients (appears as chat message)");
+            Console.WriteLine("  /msg <username> <message> - Send a private message to a specific user");
             Console.WriteLine("  /kick <username>     - Disconnect a specific user");
             Console.WriteLine("  /list                - List all connected users");
             Console.WriteLine("  /stop                - Stop the server\n");
@@ -78,6 +81,48 @@ namespace Chat_Room
                             }
                             break;
 
+                        case "/say":
+                            if (parts.Length > 1)
+                            {
+                                await BroadcastJsonAsync("message", parts[1], null, "SERVER");
+                                Console.WriteLine($"SERVER: {parts[1]}");
+                            }
+                            else
+                            {
+                                Console.WriteLine("Usage: /say <message>");
+                            }
+                            break;
+
+                        case "/msg":
+                            if (parts.Length > 1)
+                            {
+                                var msgParts = parts[1].Split(' ', 2);
+                                if (msgParts.Length >= 2)
+                                {
+                                    var targetUsername = msgParts[0].Trim();
+                                    var privateMessage = msgParts[1];
+                                    
+                                    if (_clients.TryGetValue(targetUsername, out var targetClient))
+                                    {
+                                        await SendJsonAsync(targetClient.GetStream(), "private", privateMessage, "SERVER");
+                                        Console.WriteLine($"SERVER -> {targetUsername}: {privateMessage}");
+                                    }
+                                    else
+                                    {
+                                        Console.WriteLine($"User '{targetUsername}' not found");
+                                    }
+                                }
+                                else
+                                {
+                                    Console.WriteLine("Usage: /msg <username> <message>");
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine("Usage: /msg <username> <message>");
+                            }
+                            break;
+
                         case "/kick":
                             if (parts.Length > 1)
                             {
@@ -122,7 +167,7 @@ namespace Chat_Room
                             break;
 
                         default:
-                            Console.WriteLine("Unknown command. Available commands: /broadcast, /kick, /list, /stop");
+                            Console.WriteLine("Unknown command. Available commands: /broadcast, /say, /msg, /kick, /list, /stop");
                             break;
                     }
                 }
@@ -144,6 +189,23 @@ namespace Chat_Room
                 if (bytesRead == 0) return;
 
                 clientId = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
+                
+                // Validate username
+                if (string.IsNullOrWhiteSpace(clientId))
+                {
+                    await SendJsonAsync(stream, "server", "Invalid username. Connection rejected.");
+                    client.Close();
+                    return;
+                }
+                
+                // Check for duplicate username
+                if (_clients.ContainsKey(clientId))
+                {
+                    await SendJsonAsync(stream, "server", $"Username '{clientId}' is already taken. Connection rejected.");
+                    client.Close();
+                    Console.WriteLine($"Connection rejected: Username '{clientId}' already in use");
+                    return;
+                }
                 
                 if (_clients.TryAdd(clientId, client))
                 {
@@ -206,6 +268,74 @@ namespace Chat_Room
                 await SendJsonAsync(stream, "command", response);
                 Console.WriteLine($"{clientId} requested user list");
             }
+            else if (command == "/msg")
+            {
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var parts = message.Body.Split(' ', 2);
+                    if (parts.Length >= 2)
+                    {
+                        var targetUsername = parts[0].Trim();
+                        var privateMessage = parts[1];
+                        
+                        if (_clients.TryGetValue(targetUsername, out var targetClient))
+                        {
+                            await SendJsonAsync(targetClient.GetStream(), "private", privateMessage, clientId);
+                            // Play notification sound for private message
+                            Console.Beep(800, 100);
+                            await SendJsonAsync(stream, "privatesent", $"To {targetUsername}: {privateMessage}", clientId);
+                            Console.WriteLine($"{clientId} -> {targetUsername}: {privateMessage}");
+                        }
+                        else
+                        {
+                            await SendJsonAsync(stream, "command", $"User '{targetUsername}' not found");
+                        }
+                    }
+                    else
+                    {
+                        await SendJsonAsync(stream, "command", "Usage: /msg <username> <message>");
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /msg <username> <message>");
+                }
+            }
+            else if (command == "/ping")
+            {
+                await SendJsonAsync(stream, "command", "Pong! Server is responsive.");
+                Console.WriteLine($"{clientId} pinged the server");
+            }
+            else if (command == "/time")
+            {
+                var serverTime = DateTime.Now.ToString("HH:mm:ss");
+                await SendJsonAsync(stream, "command", $"Server time: {serverTime}");
+                Console.WriteLine($"{clientId} requested server time");
+            }
+            else if (command == "/uptime")
+            {
+                var uptime = DateTime.Now - Process.GetCurrentProcess().StartTime;
+                await SendJsonAsync(stream, "command", $"Server uptime: {uptime.Days}d {uptime.Hours}h {uptime.Minutes}m {uptime.Seconds}s");
+                Console.WriteLine($"{clientId} requested uptime");
+            }
+            else if (command == "/whoami")
+            {
+                await SendJsonAsync(stream, "command", $"You are logged in as: {clientId}");
+                Console.WriteLine($"{clientId} used whoami");
+            }
+            else if (command == "/me")
+            {
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var actionMessage = $"* {clientId} {message.Body}";
+                    await BroadcastJsonAsync("action", actionMessage, null);
+                    Console.WriteLine($"ACTION: {actionMessage}");
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /me <action>");
+                }
+            }
             else if (command == "/exit")
             {
                 Console.WriteLine($"{clientId} requested disconnect");
@@ -214,10 +344,16 @@ namespace Chat_Room
             {
                 var helpText = new StringBuilder();
                 helpText.AppendLine("Available commands:");
-                helpText.AppendLine("  /help  - Show this help message");
-                helpText.AppendLine("  /list  - List all connected users");
-                helpText.AppendLine("  /say   - Sends a message to the server");
-                helpText.Append("  /exit  - Disconnect from the chat");
+                helpText.AppendLine("  /help     - Show this help message");
+                helpText.AppendLine("  /list     - List all connected users");
+                helpText.AppendLine("  /msg <username> <message> - Send a private message to a user");
+                helpText.AppendLine("  /me <action> - Send an action message (e.g., /me waves)");
+                helpText.AppendLine("  /whoami   - Show your current username");
+                helpText.AppendLine("  /ping     - Check server responsiveness");
+                helpText.AppendLine("  /time     - Show server time");
+                helpText.AppendLine("  /uptime   - Show server uptime");
+                helpText.AppendLine("  /say      - Sends a message to the server");
+                helpText.Append("  /exit     - Disconnect from the chat");
                 
                 await SendJsonAsync(stream, "command", helpText.ToString());
                 Console.WriteLine($"{clientId} requested help");
