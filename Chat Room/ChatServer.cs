@@ -13,6 +13,8 @@ namespace Chat_Room
         private readonly ConcurrentDictionary<string, TcpClient> _clients = new();
         private bool _isRunning;
         private int _port;
+        private string _currentInput = "";
+        private readonly object _consoleLock = new object();
 
         public ChatServer(int port = 5000)
         {
@@ -49,7 +51,14 @@ namespace Chat_Room
                 {
                     if (_isRunning)
                     {
-                        Console.WriteLine($"Error accepting client: {ex.Message}");
+                        lock (_consoleLock)
+                        {
+                            ClearCurrentLine();
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.WriteLine($"[Error] Accepting client: {ex.Message}");
+                            Console.ResetColor();
+                            RestoreCurrentLine();
+                        }
                     }
                 }
             }
@@ -61,8 +70,50 @@ namespace Chat_Room
             {
                 while (_isRunning)
                 {
-                    var input = Console.ReadLine();
-                    if (string.IsNullOrWhiteSpace(input)) continue;
+                    _currentInput = "";
+                    
+                    // Read input character by character
+                    ConsoleKeyInfo keyInfo;
+                    while (_isRunning)
+                    {
+                        if (!Console.KeyAvailable)
+                        {
+                            await Task.Delay(10);
+                            continue;
+                        }
+
+                        keyInfo = Console.ReadKey(intercept: true);
+
+                        lock (_consoleLock)
+                        {
+                            if (keyInfo.Key == ConsoleKey.Enter)
+                            {
+                                Console.WriteLine();
+                                break;
+                            }
+                            else if (keyInfo.Key == ConsoleKey.Backspace)
+                            {
+                                if (_currentInput.Length > 0)
+                                {
+                                    _currentInput = _currentInput.Substring(0, _currentInput.Length - 1);
+                                    Console.Write("\b \b");
+                                }
+                            }
+                            else if (!char.IsControl(keyInfo.KeyChar))
+                            {
+                                _currentInput += keyInfo.KeyChar;
+                                Console.Write(keyInfo.KeyChar);
+                            }
+                        }
+                    }
+
+                    if (!_isRunning)
+                        break;
+
+                    var input = _currentInput.Trim();
+                    
+                    if (string.IsNullOrWhiteSpace(input))
+                        continue;
 
                     var parts = input.Split(' ', 2);
                     var command = parts[0].ToLower();
@@ -73,11 +124,23 @@ namespace Chat_Room
                             if (parts.Length > 1)
                             {
                                 await BroadcastJsonAsync("server", parts[1], null);
-                                Console.WriteLine($"Broadcast: {parts[1]}");
+                                lock (_consoleLock)
+                                {
+                                    ClearCurrentLine();
+                                    Console.ForegroundColor = ConsoleColor.Blue;
+                                    Console.WriteLine($"[Broadcast] {parts[1]}");
+                                    Console.ResetColor();
+                                    RestoreCurrentLine();
+                                }
                             }
                             else
                             {
-                                Console.WriteLine("Usage: /broadcast <message>");
+                                lock (_consoleLock)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine("Usage: /broadcast <message>");
+                                    Console.ResetColor();
+                                }
                             }
                             break;
 
@@ -85,11 +148,23 @@ namespace Chat_Room
                             if (parts.Length > 1)
                             {
                                 await BroadcastJsonAsync("message", parts[1], null, "SERVER");
-                                Console.WriteLine($"SERVER: {parts[1]}");
+                                lock (_consoleLock)
+                                {
+                                    ClearCurrentLine();
+                                    Console.ForegroundColor = ConsoleColor.Green;
+                                    Console.WriteLine($"SERVER: {parts[1]}");
+                                    Console.ResetColor();
+                                    RestoreCurrentLine();
+                                }
                             }
                             else
                             {
-                                Console.WriteLine("Usage: /say <message>");
+                                lock (_consoleLock)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine("Usage: /say <message>");
+                                    Console.ResetColor();
+                                }
                             }
                             break;
 
@@ -105,21 +180,43 @@ namespace Chat_Room
                                     if (_clients.TryGetValue(targetUsername, out var targetClient))
                                     {
                                         await SendJsonAsync(targetClient.GetStream(), "private", privateMessage, "SERVER");
-                                        Console.WriteLine($"SERVER -> {targetUsername}: {privateMessage}");
+                                        lock (_consoleLock)
+                                        {
+                                            ClearCurrentLine();
+                                            Console.ForegroundColor = ConsoleColor.Cyan;
+                                            Console.WriteLine($"[PM to {targetUsername}] {privateMessage}");
+                                            Console.ResetColor();
+                                            RestoreCurrentLine();
+                                        }
                                     }
                                     else
                                     {
-                                        Console.WriteLine($"User '{targetUsername}' not found");
+                                        lock (_consoleLock)
+                                        {
+                                            Console.ForegroundColor = ConsoleColor.Red;
+                                            Console.WriteLine($"User '{targetUsername}' not found");
+                                            Console.ResetColor();
+                                        }
                                     }
                                 }
                                 else
                                 {
-                                    Console.WriteLine("Usage: /msg <username> <message>");
+                                    lock (_consoleLock)
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.Red;
+                                        Console.WriteLine("Usage: /msg <username> <message>");
+                                        Console.ResetColor();
+                                    }
                                 }
                             }
                             else
                             {
-                                Console.WriteLine("Usage: /msg <username> <message>");
+                                lock (_consoleLock)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine("Usage: /msg <username> <message>");
+                                    Console.ResetColor();
+                                }
                             }
                             break;
 
@@ -132,46 +229,93 @@ namespace Chat_Room
                                     await SendJsonAsync(client.GetStream(), "server", "You have been kicked from the server.");
                                     client.Close();
                                     _clients.TryRemove(username, out _);
-                                    Console.WriteLine($"Kicked user: {username}");
+                                    lock (_consoleLock)
+                                    {
+                                        ClearCurrentLine();
+                                        Console.ForegroundColor = ConsoleColor.Yellow;
+                                        Console.WriteLine($"[Kicked] {username}");
+                                        Console.ResetColor();
+                                        RestoreCurrentLine();
+                                    }
                                     await BroadcastJsonAsync("server", $"{username} was kicked from the server", null);
                                 }
                                 else
                                 {
-                                    Console.WriteLine($"User '{username}' not found");
+                                    lock (_consoleLock)
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.Red;
+                                        Console.WriteLine($"User '{username}' not found");
+                                        Console.ResetColor();
+                                    }
                                 }
                             }
                             else
                             {
-                                Console.WriteLine("Usage: /kick <username>");
+                                lock (_consoleLock)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine("Usage: /kick <username>");
+                                    Console.ResetColor();
+                                }
                             }
                             break;
 
                         case "/list":
-                            if (_clients.Count > 0)
+                            lock (_consoleLock)
                             {
-                                Console.WriteLine($"Connected users ({_clients.Count}):");
-                                foreach (var username in _clients.Keys)
+                                if (_clients.Count > 0)
                                 {
-                                    Console.WriteLine($"  - {username}");
+                                    Console.ForegroundColor = ConsoleColor.Cyan;
+                                    Console.WriteLine($"Connected users ({_clients.Count}):");
+                                    foreach (var username in _clients.Keys)
+                                    {
+                                        Console.WriteLine($"  - {username}");
+                                    }
+                                    Console.ResetColor();
                                 }
-                            }
-                            else
-                            {
-                                Console.WriteLine("No users connected");
+                                else
+                                {
+                                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                                    Console.WriteLine("No users connected");
+                                    Console.ResetColor();
+                                }
                             }
                             break;
 
                         case "/stop":
-                            Console.WriteLine("Stopping server...");
+                            lock (_consoleLock)
+                            {
+                                Console.ForegroundColor = ConsoleColor.Red;
+                                Console.WriteLine("Stopping server...");
+                                Console.ResetColor();
+                            }
                             Stop();
                             break;
 
                         default:
-                            Console.WriteLine("Unknown command. Available commands: /broadcast, /say, /msg, /kick, /list, /stop");
+                            lock (_consoleLock)
+                            {
+                                Console.ForegroundColor = ConsoleColor.Red;
+                                Console.WriteLine("Unknown command. Available commands: /broadcast, /say, /msg, /kick, /list, /stop");
+                                Console.ResetColor();
+                            }
                             break;
                     }
                 }
             });
+        }
+
+        private void ClearCurrentLine()
+        {
+            Console.Write("\r" + new string(' ', Console.BufferWidth - 1) + "\r");
+        }
+
+        private void RestoreCurrentLine()
+        {
+            if (!string.IsNullOrEmpty(_currentInput))
+            {
+                Console.Write(_currentInput);
+            }
         }
 
         private async Task HandleClientAsync(TcpClient client)
@@ -203,13 +347,27 @@ namespace Chat_Room
                 {
                     await SendJsonAsync(stream, "server", $"Username '{clientId}' is already taken. Connection rejected.");
                     client.Close();
-                    Console.WriteLine($"Connection rejected: Username '{clientId}' already in use");
+                    lock (_consoleLock)
+                    {
+                        ClearCurrentLine();
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"[Connection Rejected] Username '{clientId}' already in use");
+                        Console.ResetColor();
+                        RestoreCurrentLine();
+                    }
                     return;
                 }
                 
                 if (_clients.TryAdd(clientId, client))
                 {
-                    Console.WriteLine($"{clientId} connected");
+                    lock (_consoleLock)
+                    {
+                        ClearCurrentLine();
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"[Connected] {clientId}");
+                        Console.ResetColor();
+                        RestoreCurrentLine();
+                    }
                     await BroadcastJsonAsync("server", $"{clientId} joined the chat", null);
 
                     // Handle incoming messages
@@ -231,20 +389,41 @@ namespace Chat_Room
                         }
                         catch (JsonException ex)
                         {
-                            Console.WriteLine($"Invalid JSON from {clientId}: {ex.Message}");
+                            lock (_consoleLock)
+                            {
+                                ClearCurrentLine();
+                                Console.ForegroundColor = ConsoleColor.Red;
+                                Console.WriteLine($"[Error] Invalid JSON from {clientId}: {ex.Message}");
+                                Console.ResetColor();
+                                RestoreCurrentLine();
+                            }
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error handling client {clientId}: {ex.Message}");
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"[Error] Handling client {clientId}: {ex.Message}");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
             }
             finally
             {
                 if (clientId != null && _clients.TryRemove(clientId, out _))
                 {
-                    Console.WriteLine($"{clientId} disconnected");
+                    lock (_consoleLock)
+                    {
+                        ClearCurrentLine();
+                        Console.ForegroundColor = ConsoleColor.DarkYellow;
+                        Console.WriteLine($"[Disconnected] {clientId}");
+                        Console.ResetColor();
+                        RestoreCurrentLine();
+                    }
                     await BroadcastJsonAsync("server", $"{clientId} left the chat", null);
                 }
                 stream?.Close();
@@ -258,7 +437,15 @@ namespace Chat_Room
 
             if (command == "/say")
             {
-                Console.WriteLine($"{clientId}: {message.Body}");
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.White;
+                    Console.Write($"{clientId}");
+                    Console.ResetColor();
+                    Console.WriteLine($": {message.Body}");
+                    RestoreCurrentLine();
+                }
                 await BroadcastJsonAsync("message", message.Body ?? "", clientId, clientId);
             }
             else if (command == "/list")
@@ -266,7 +453,14 @@ namespace Chat_Room
                 var userList = string.Join(", ", _clients.Keys);
                 var response = $"Connected users ({_clients.Count}): {userList}";
                 await SendJsonAsync(stream, "command", response);
-                Console.WriteLine($"{clientId} requested user list");
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[Command] {clientId} requested user list");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
             }
             else if (command == "/msg")
             {
@@ -284,7 +478,14 @@ namespace Chat_Room
                             // Play notification sound for private message
                             Console.Beep(800, 100);
                             await SendJsonAsync(stream, "privatesent", $"To {targetUsername}: {privateMessage}", clientId);
-                            Console.WriteLine($"{clientId} -> {targetUsername}: {privateMessage}");
+                            lock (_consoleLock)
+                            {
+                                ClearCurrentLine();
+                                Console.ForegroundColor = ConsoleColor.Cyan;
+                                Console.WriteLine($"[PM] {clientId} -> {targetUsername}: {privateMessage}");
+                                Console.ResetColor();
+                                RestoreCurrentLine();
+                            }
                         }
                         else
                         {
@@ -304,24 +505,52 @@ namespace Chat_Room
             else if (command == "/ping")
             {
                 await SendJsonAsync(stream, "command", "Pong! Server is responsive.");
-                Console.WriteLine($"{clientId} pinged the server");
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[Command] {clientId} pinged the server");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
             }
             else if (command == "/time")
             {
                 var serverTime = DateTime.Now.ToString("HH:mm:ss");
                 await SendJsonAsync(stream, "command", $"Server time: {serverTime}");
-                Console.WriteLine($"{clientId} requested server time");
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[Command] {clientId} requested server time");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
             }
             else if (command == "/uptime")
             {
                 var uptime = DateTime.Now - Process.GetCurrentProcess().StartTime;
                 await SendJsonAsync(stream, "command", $"Server uptime: {uptime.Days}d {uptime.Hours}h {uptime.Minutes}m {uptime.Seconds}s");
-                Console.WriteLine($"{clientId} requested uptime");
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[Command] {clientId} requested uptime");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
             }
             else if (command == "/whoami")
             {
                 await SendJsonAsync(stream, "command", $"You are logged in as: {clientId}");
-                Console.WriteLine($"{clientId} used whoami");
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[Command] {clientId} used whoami");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
             }
             else if (command == "/me")
             {
@@ -329,7 +558,14 @@ namespace Chat_Room
                 {
                     var actionMessage = $"* {clientId} {message.Body}";
                     await BroadcastJsonAsync("action", actionMessage, null);
-                    Console.WriteLine($"ACTION: {actionMessage}");
+                    lock (_consoleLock)
+                    {
+                        ClearCurrentLine();
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.WriteLine($"[Action] {actionMessage}");
+                        Console.ResetColor();
+                        RestoreCurrentLine();
+                    }
                 }
                 else
                 {
@@ -338,7 +574,14 @@ namespace Chat_Room
             }
             else if (command == "/exit")
             {
-                Console.WriteLine($"{clientId} requested disconnect");
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[Command] {clientId} requested disconnect");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
             }
             else if (command == "/help")
             {
@@ -356,7 +599,14 @@ namespace Chat_Room
                 helpText.Append("  /exit     - Disconnect from the chat");
                 
                 await SendJsonAsync(stream, "command", helpText.ToString());
-                Console.WriteLine($"{clientId} requested help");
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[Command] {clientId} requested help");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
             }
             else
             {
