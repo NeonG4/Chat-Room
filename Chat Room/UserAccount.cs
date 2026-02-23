@@ -7,5 +7,8 @@ namespace Chat_Room
         public int MessageCount { get; set; } = 0;
         public DateTime CreatedDate { get; set; } = DateTime.Now;
         public DateTime LastLogin { get; set; } = DateTime.Now;
+        public bool IsMuted { get; set; } = false;
+        public DateTime? MutedUntil { get; set; } = null;
+        public List<string> MessageHistory { get; set; } = new();
     }
 }

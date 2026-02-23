@@ -131,5 +131,72 @@ namespace Chat_Room
         {
             return _users.Values.ToList();
         }
+
+        public void MuteUser(string username, int minutes)
+        {
+            if (_users.ContainsKey(username))
+            {
+                _users[username].IsMuted = true;
+                _users[username].MutedUntil = DateTime.Now.AddMinutes(minutes);
+                SaveUsers();
+            }
+        }
+
+        public void UnmuteUser(string username)
+        {
+            if (_users.ContainsKey(username))
+            {
+                _users[username].IsMuted = false;
+                _users[username].MutedUntil = null;
+                SaveUsers();
+            }
+        }
+
+        public bool IsUserMuted(string username)
+        {
+            if (!_users.ContainsKey(username))
+                return false;
+
+            var user = _users[username];
+            
+            if (!user.IsMuted)
+                return false;
+
+            if (user.MutedUntil.HasValue && DateTime.Now >= user.MutedUntil.Value)
+            {
+                user.IsMuted = false;
+                user.MutedUntil = null;
+                SaveUsers();
+                return false;
+            }
+
+            return user.IsMuted;
+        }
+
+        public void AddMessageToHistory(string username, string message)
+        {
+            if (_users.ContainsKey(username))
+            {
+                var user = _users[username];
+                user.MessageHistory.Add($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}");
+                
+                // Keep only last 100 messages
+                if (user.MessageHistory.Count > 100)
+                {
+                    user.MessageHistory.RemoveAt(0);
+                }
+                SaveUsers();
+            }
+        }
+
+        public List<string> GetMessageHistory(string username, int count = 10)
+        {
+            if (_users.ContainsKey(username))
+            {
+                var history = _users[username].MessageHistory;
+                return history.TakeLast(count).ToList();
+            }
+            return new List<string>();
+        }
     }
 }

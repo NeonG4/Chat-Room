@@ -16,6 +16,7 @@ namespace Chat_Room
         private int _port;
         private string _currentInput = "";
         private readonly object _consoleLock = new object();
+        private string _serverIp = "";
 
         public ChatServer(int port = 5000)
         {
@@ -28,7 +29,20 @@ namespace Chat_Room
             _listener.Start();
             _isRunning = true;
 
+            // Get local IP address
+            try
+            {
+                var host = Dns.GetHostEntry(Dns.GetHostName());
+                var localIp = host.AddressList.FirstOrDefault(ip => ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
+                _serverIp = localIp?.ToString() ?? "Unknown";
+            }
+            catch
+            {
+                _serverIp = "Unable to determine";
+            }
+
             Console.WriteLine($"Server started on port {_port}");
+            Console.WriteLine($"Server IP: {_serverIp}");
             Console.WriteLine($"Total registered users: {_userManager.GetTotalUsers()}");
             Console.WriteLine("Waiting for clients to connect...");
             Console.WriteLine("Type /help for a list of server commands\n");
@@ -40,6 +54,15 @@ namespace Chat_Room
             Console.WriteLine("  /list                - List all connected users");
             Console.WriteLine("  /stop                - Stop the server");
             Console.WriteLine("  /help                - List all available commands\n");
+            Console.WriteLine("  /users                - List all registered users with statistics");
+            Console.WriteLine("  /stats <username>         - Show detailed stats for a specific user");
+            Console.WriteLine("  /mute <username> <minutes> - Mute a user for specified minutes");
+            Console.WriteLine("  /unmute <username>        - Unmute a user");
+            Console.WriteLine("  /history <username> [count] - View user's message history");
+            Console.WriteLine("  /info                     - Show server IP and port information");
+            Console.WriteLine("  /uptime                   - Show server uptime");
+            Console.WriteLine("  /time                     - Show server time");
+            Console.WriteLine("  /ping                     - Check server responsiveness\n");
 
             // Start server command handler
             _ = HandleServerCommandsAsync();
@@ -75,7 +98,7 @@ namespace Chat_Room
                 while (_isRunning)
                 {
                     _currentInput = "";
-                    
+
                     // Read input character by character
                     ConsoleKeyInfo keyInfo;
                     while (_isRunning)
@@ -115,7 +138,7 @@ namespace Chat_Room
                         break;
 
                     var input = _currentInput.Trim();
-                    
+
                     if (string.IsNullOrWhiteSpace(input))
                         continue;
 
@@ -180,7 +203,7 @@ namespace Chat_Room
                                 {
                                     var targetUsername = msgParts[0].Trim();
                                     var privateMessage = msgParts[1];
-                                    
+
                                     if (_clients.TryGetValue(targetUsername, out var targetClient))
                                     {
                                         await SendJsonAsync(targetClient.GetStream(), "private", privateMessage, "SERVER");
@@ -292,6 +315,7 @@ namespace Chat_Room
                                 Console.ForegroundColor = ConsoleColor.Cyan;
                                 Console.WriteLine("\nAvailable Server Commands:");
                                 Console.WriteLine("  /help                     - Show this help message");
+                                Console.WriteLine("  /info                     - Show server IP and port information");
                                 Console.WriteLine("  /broadcast <message>      - Send a server announcement to all clients");
                                 Console.WriteLine("  /say <message>            - Send a chat message as SERVER");
                                 Console.WriteLine("  /msg <username> <message> - Send a private message to a specific user");
@@ -299,7 +323,27 @@ namespace Chat_Room
                                 Console.WriteLine("  /list                     - List all connected users");
                                 Console.WriteLine("  /users                    - List all registered users with statistics");
                                 Console.WriteLine("  /stats <username>         - Show detailed stats for a specific user");
+                                Console.WriteLine("  /mute <username> <minutes> - Mute a user for specified minutes");
+                                Console.WriteLine("  /unmute <username>        - Unmute a user");
+                                Console.WriteLine("  /history <username> [count] - View user's message history");
                                 Console.WriteLine("  /stop                     - Stop the server");
+                                Console.ResetColor();
+                            }
+                            break;
+
+                        case "/info":
+                            lock (_consoleLock)
+                            {
+                                Console.ForegroundColor = ConsoleColor.Cyan;
+                                Console.WriteLine("\nServer Information:");
+                                Console.WriteLine($"  IP Address: {_serverIp}");
+                                Console.WriteLine($"  Port: {_port}");
+                                Console.WriteLine($"  Status: {(_isRunning ? "Running" : "Stopped")}");
+                                Console.WriteLine($"  Connected users: {_clients.Count}");
+                                Console.WriteLine($"  Total registered users: {_userManager.GetTotalUsers()}");
+
+                                var uptime = DateTime.Now - Process.GetCurrentProcess().StartTime;
+                                Console.WriteLine($"  Uptime: {uptime.Days}d {uptime.Hours}h {uptime.Minutes}m {uptime.Seconds}s");
                                 Console.ResetColor();
                             }
                             break;
@@ -335,7 +379,7 @@ namespace Chat_Room
                             {
                                 var username = parts[1].Trim();
                                 var account = _userManager.GetUserAccount(username);
-                                
+
                                 lock (_consoleLock)
                                 {
                                     if (account != null)
@@ -346,6 +390,7 @@ namespace Chat_Room
                                         Console.WriteLine($"  Account created: {account.CreatedDate:yyyy-MM-dd HH:mm:ss}");
                                         Console.WriteLine($"  Last login: {account.LastLogin:yyyy-MM-dd HH:mm:ss}");
                                         Console.WriteLine($"  Currently online: {(_clients.ContainsKey(username) ? "Yes" : "No")}");
+                                        Console.WriteLine($"  Muted: {(account.IsMuted ? $"Yes (until {account.MutedUntil:yyyy-MM-dd HH:mm:ss})" : "No")}");
                                         Console.ResetColor();
                                     }
                                     else
@@ -362,6 +407,158 @@ namespace Chat_Room
                                 {
                                     Console.ForegroundColor = ConsoleColor.Red;
                                     Console.WriteLine("Usage: /stats <username>");
+                                    Console.ResetColor();
+                                }
+                            }
+                            break;
+
+                        case "/mute":
+                            if (parts.Length > 1)
+                            {
+                                var muteParts = parts[1].Split(' ', 2);
+                                if (muteParts.Length >= 2)
+                                {
+                                    var username = muteParts[0].Trim();
+                                    if (int.TryParse(muteParts[1], out int minutes))
+                                    {
+                                        if (_userManager.UserExists(username))
+                                        {
+                                            _userManager.MuteUser(username, minutes);
+                                            lock (_consoleLock)
+                                            {
+                                                Console.ForegroundColor = ConsoleColor.Yellow;
+                                                Console.WriteLine($"[Muted] {username} for {minutes} minutes");
+                                                Console.ResetColor();
+                                            }
+
+                                            if (_clients.ContainsKey(username))
+                                            {
+                                                await SendJsonAsync(_clients[username].GetStream(), "server",
+                                                    $"You have been muted for {minutes} minutes.");
+                                            }
+                                        }
+                                        else
+                                        {
+                                            lock (_consoleLock)
+                                            {
+                                                Console.ForegroundColor = ConsoleColor.Red;
+                                                Console.WriteLine($"User '{username}' not found");
+                                                Console.ResetColor();
+                                            }
+                                        }
+                                    }
+                                    else
+                                    {
+                                        lock (_consoleLock)
+                                        {
+                                            Console.ForegroundColor = ConsoleColor.Red;
+                                            Console.WriteLine("Invalid time format. Use minutes as a number.");
+                                            Console.ResetColor();
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    lock (_consoleLock)
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.Red;
+                                        Console.WriteLine("Usage: /mute <username> <minutes>");
+                                        Console.ResetColor();
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                lock (_consoleLock)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine("Usage: /mute <username> <minutes>");
+                                    Console.ResetColor();
+                                }
+                            }
+                            break;
+
+                        case "/unmute":
+                            if (parts.Length > 1)
+                            {
+                                var username = parts[1].Trim();
+                                if (_userManager.UserExists(username))
+                                {
+                                    _userManager.UnmuteUser(username);
+                                    lock (_consoleLock)
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.Green;
+                                        Console.WriteLine($"[Unmuted] {username}");
+                                        Console.ResetColor();
+                                    }
+
+                                    if (_clients.ContainsKey(username))
+                                    {
+                                        await SendJsonAsync(_clients[username].GetStream(), "server",
+                                            "You have been unmuted.");
+                                    }
+                                }
+                                else
+                                {
+                                    lock (_consoleLock)
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.Red;
+                                        Console.WriteLine($"User '{username}' not found");
+                                        Console.ResetColor();
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                lock (_consoleLock)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine("Usage: /unmute <username>");
+                                    Console.ResetColor();
+                                }
+                            }
+                            break;
+
+                        case "/history":
+                            if (parts.Length > 1)
+                            {
+                                var histParts = parts[1].Split(' ', 2);
+                                var username = histParts[0].Trim();
+                                int count = 10;
+
+                                if (histParts.Length > 1)
+                                {
+                                    int.TryParse(histParts[1], out count);
+                                }
+
+                                var history = _userManager.GetMessageHistory(username, count);
+
+                                lock (_consoleLock)
+                                {
+                                    if (history.Count > 0)
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.Cyan;
+                                        Console.WriteLine($"\nMessage history for {username} (last {history.Count} messages):");
+                                        foreach (var msg in history)
+                                        {
+                                            Console.WriteLine($"  {msg}");
+                                        }
+                                        Console.ResetColor();
+                                    }
+                                    else
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                                        Console.WriteLine($"No message history found for {username}");
+                                        Console.ResetColor();
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                lock (_consoleLock)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine("Usage: /history <username> [count]");
                                     Console.ResetColor();
                                 }
                             }
@@ -412,17 +609,17 @@ namespace Chat_Room
             {
                 stream = client.GetStream();
                 var buffer = new byte[4096];
-                
+
                 // Read authentication message
                 var bytesRead = await stream.ReadAsync(buffer);
                 if (bytesRead == 0) return;
 
                 var authJson = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
-                
+
                 try
                 {
                     var authMessage = JsonSerializer.Deserialize<ClientMessage>(authJson);
-                    
+
                     if (authMessage == null || string.IsNullOrWhiteSpace(authMessage.Body))
                     {
                         await SendJsonAsync(stream, "server", "Invalid authentication format.");
@@ -521,7 +718,7 @@ namespace Chat_Room
                     client.Close();
                     return;
                 }
-                
+
                 // Check for duplicate connection
                 if (_clients.ContainsKey(clientId))
                 {
@@ -537,7 +734,7 @@ namespace Chat_Room
                     }
                     return;
                 }
-                
+
                 if (_clients.TryAdd(clientId, client))
                 {
                     var account = _userManager.GetUserAccount(clientId);
@@ -558,11 +755,11 @@ namespace Chat_Room
                         if (bytesRead == 0) break;
 
                         var jsonString = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
-                        
+
                         try
                         {
                             var message = JsonSerializer.Deserialize<ClientMessage>(jsonString);
-                            
+
                             if (message != null)
                             {
                                 await ProcessMessageAsync(message, clientId, stream);
@@ -619,7 +816,15 @@ namespace Chat_Room
 
             if (command == "/say")
             {
+                // Check if user is muted
+                if (_userManager.IsUserMuted(clientId))
+                {
+                    await SendJsonAsync(stream, "command", "You are currently muted and cannot send messages.");
+                    return;
+                }
+
                 _userManager.IncrementMessageCount(clientId);
+                _userManager.AddMessageToHistory(clientId, message.Body ?? "");
                 lock (_consoleLock)
                 {
                     ClearCurrentLine();
@@ -654,10 +859,18 @@ namespace Chat_Room
                     {
                         var targetUsername = parts[0].Trim();
                         var privateMessage = parts[1];
-                        
+
                         if (_clients.TryGetValue(targetUsername, out var targetClient))
                         {
+                            // Check if user is muted
+                            if (_userManager.IsUserMuted(clientId))
+                            {
+                                await SendJsonAsync(stream, "command", "You are currently muted and cannot send messages.");
+                                return;
+                            }
+
                             _userManager.IncrementMessageCount(clientId);
+                            _userManager.AddMessageToHistory(clientId, $"PM to {targetUsername}: {privateMessage}");
                             await SendJsonAsync(targetClient.GetStream(), "private", privateMessage, clientId);
                             // Play notification sound for private message
                             Console.Beep(800, 100);
@@ -749,7 +962,15 @@ namespace Chat_Room
             {
                 if (!string.IsNullOrWhiteSpace(message.Body))
                 {
+                    // Check if user is muted
+                    if (_userManager.IsUserMuted(clientId))
+                    {
+                        await SendJsonAsync(stream, "command", "You are currently muted and cannot send messages.");
+                        return;
+                    }
+
                     _userManager.IncrementMessageCount(clientId);
+                    _userManager.AddMessageToHistory(clientId, $"* {message.Body}");
                     var actionMessage = $"* {clientId} {message.Body}";
                     await BroadcastJsonAsync("action", actionMessage, null);
                     lock (_consoleLock)
@@ -785,19 +1006,54 @@ namespace Chat_Room
                 helpText.AppendLine("  /list     - List all connected users");
                 helpText.AppendLine("  /msg <username> <message> - Send a private message to a user");
                 helpText.AppendLine("  /me <action> - Send an action message (e.g., /me waves)");
-                helpText.AppendLine("  /whoami   - Show your current username");
+                helpText.AppendLine("  /whoami   - Show your current username and stats");
+                helpText.AppendLine("  /history [count] - View your message history");
                 helpText.AppendLine("  /ping     - Check server responsiveness");
                 helpText.AppendLine("  /time     - Show server time");
                 helpText.AppendLine("  /uptime   - Show server uptime");
                 helpText.AppendLine("  /say      - Sends a message to the server");
                 helpText.Append("  /exit     - Disconnect from the chat");
-                
+
                 await SendJsonAsync(stream, "command", helpText.ToString());
                 lock (_consoleLock)
                 {
                     ClearCurrentLine();
                     Console.ForegroundColor = ConsoleColor.DarkGray;
                     Console.WriteLine($"[Command] {clientId} requested help");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
+            }
+            else if (command == "/history")
+            {
+                int count = 10;
+                if (!string.IsNullOrWhiteSpace(message.Body) && int.TryParse(message.Body.Trim(), out int requestedCount))
+                {
+                    count = Math.Min(requestedCount, 50); // Cap at 50 messages
+                }
+
+                var history = _userManager.GetMessageHistory(clientId, count);
+                var response = new StringBuilder();
+
+                if (history.Count > 0)
+                {
+                    response.AppendLine($"Your message history (last {history.Count} messages):");
+                    foreach (var msg in history)
+                    {
+                        response.AppendLine(msg);
+                    }
+                }
+                else
+                {
+                    response.Append("No message history found.");
+                }
+
+                await SendJsonAsync(stream, "command", response.ToString());
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[Command] {clientId} requested message history");
                     Console.ResetColor();
                     RestoreCurrentLine();
                 }
@@ -816,10 +1072,10 @@ namespace Chat_Room
                 Body = body,
                 Username = username
             };
-            
+
             var jsonString = JsonSerializer.Serialize(response) + "\n";
             var jsonBytes = Encoding.UTF8.GetBytes(jsonString);
-            
+
             try
             {
                 await stream.WriteAsync(jsonBytes);
@@ -838,7 +1094,7 @@ namespace Chat_Room
                 Body = body,
                 Username = username
             };
-            
+
             var jsonString = JsonSerializer.Serialize(response) + "\n";
             var jsonBytes = Encoding.UTF8.GetBytes(jsonString);
 
@@ -864,7 +1120,7 @@ namespace Chat_Room
         {
             _isRunning = false;
             _listener?.Stop();
-            
+
             foreach (var client in _clients.Values)
             {
                 client.Close();
