@@ -10,5 +10,8 @@ namespace Chat_Room
         public bool IsMuted { get; set; } = false;
         public DateTime? MutedUntil { get; set; } = null;
         public List<string> MessageHistory { get; set; } = new();
+        public bool IsAdmin { get; set; } = false;
+        public string? PromotedBy { get; set; } = null;
+        public DateTime? PromotedDate { get; set; } = null;
     }
 }

@@ -198,5 +198,37 @@ namespace Chat_Room
             }
             return new List<string>();
         }
+
+        public void PromoteToAdmin(string username, string promotedBy)
+        {
+            if (_users.ContainsKey(username))
+            {
+                _users[username].IsAdmin = true;
+                _users[username].PromotedBy = promotedBy;
+                _users[username].PromotedDate = DateTime.Now;
+                SaveUsers();
+            }
+        }
+
+        public void DemoteFromAdmin(string username)
+        {
+            if (_users.ContainsKey(username))
+            {
+                _users[username].IsAdmin = false;
+                _users[username].PromotedBy = null;
+                _users[username].PromotedDate = null;
+                SaveUsers();
+            }
+        }
+
+        public bool IsAdmin(string username)
+        {
+            return _users.ContainsKey(username) && _users[username].IsAdmin;
+        }
+
+        public List<UserAccount> GetAdmins()
+        {
+            return _users.Values.Where(u => u.IsAdmin).ToList();
+        }
     }
 }

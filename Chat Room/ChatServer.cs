@@ -46,23 +46,6 @@ namespace Chat_Room
             Console.WriteLine($"Total registered users: {_userManager.GetTotalUsers()}");
             Console.WriteLine("Waiting for clients to connect...");
             Console.WriteLine("Type /help for a list of server commands\n");
-            Console.WriteLine("Server Commands:");
-            Console.WriteLine("  /broadcast <message> - Send a message to all clients");
-            Console.WriteLine("  /say <message>       - Send a message to all clients (appears as chat message)");
-            Console.WriteLine("  /msg <username> <message> - Send a private message to a specific user");
-            Console.WriteLine("  /kick <username>     - Disconnect a specific user");
-            Console.WriteLine("  /list                - List all connected users");
-            Console.WriteLine("  /stop                - Stop the server");
-            Console.WriteLine("  /help                - List all available commands\n");
-            Console.WriteLine("  /users                - List all registered users with statistics");
-            Console.WriteLine("  /stats <username>         - Show detailed stats for a specific user");
-            Console.WriteLine("  /mute <username> <minutes> - Mute a user for specified minutes");
-            Console.WriteLine("  /unmute <username>        - Unmute a user");
-            Console.WriteLine("  /history <username> [count] - View user's message history");
-            Console.WriteLine("  /info                     - Show server IP and port information");
-            Console.WriteLine("  /uptime                   - Show server uptime");
-            Console.WriteLine("  /time                     - Show server time");
-            Console.WriteLine("  /ping                     - Check server responsiveness\n");
 
             // Start server command handler
             _ = HandleServerCommandsAsync();
@@ -326,7 +309,11 @@ namespace Chat_Room
                                 Console.WriteLine("  /mute <username> <minutes> - Mute a user for specified minutes");
                                 Console.WriteLine("  /unmute <username>        - Unmute a user");
                                 Console.WriteLine("  /history <username> [count] - View user's message history");
-                                Console.WriteLine("  /stop                     - Stop the server");
+                                Console.WriteLine("\n  Admin Management:");
+                                Console.WriteLine("  /promote <username>       - Promote a user to admin");
+                                Console.WriteLine("  /demote <username>        - Demote an admin to regular user");
+                                Console.WriteLine("  /admins                   - List all server admins");
+                                Console.WriteLine("\n  /stop                     - Stop the server");
                                 Console.ResetColor();
                             }
                             break;
@@ -378,19 +365,24 @@ namespace Chat_Room
                             if (parts.Length > 1)
                             {
                                 var username = parts[1].Trim();
-                                var account = _userManager.GetUserAccount(username);
+                                var userAccount = _userManager.GetUserAccount(username);
 
                                 lock (_consoleLock)
                                 {
-                                    if (account != null)
+                                    if (userAccount != null)
                                     {
                                         Console.ForegroundColor = ConsoleColor.Cyan;
                                         Console.WriteLine($"\nStatistics for {username}:");
-                                        Console.WriteLine($"  Total messages: {account.MessageCount}");
-                                        Console.WriteLine($"  Account created: {account.CreatedDate:yyyy-MM-dd HH:mm:ss}");
-                                        Console.WriteLine($"  Last login: {account.LastLogin:yyyy-MM-dd HH:mm:ss}");
+                                        Console.WriteLine($"  Total messages: {userAccount.MessageCount}");
+                                        Console.WriteLine($"  Account created: {userAccount.CreatedDate:yyyy-MM-dd HH:mm:ss}");
+                                        Console.WriteLine($"  Last login: {userAccount.LastLogin:yyyy-MM-dd HH:mm:ss}");
                                         Console.WriteLine($"  Currently online: {(_clients.ContainsKey(username) ? "Yes" : "No")}");
-                                        Console.WriteLine($"  Muted: {(account.IsMuted ? $"Yes (until {account.MutedUntil:yyyy-MM-dd HH:mm:ss})" : "No")}");
+                                        Console.WriteLine($"  Admin: {(userAccount.IsAdmin ? "Yes" : "No")}");
+                                        if (userAccount.IsAdmin && userAccount.PromotedBy != null)
+                                        {
+                                            Console.WriteLine($"  Promoted by: {userAccount.PromotedBy} on {userAccount.PromotedDate:yyyy-MM-dd HH:mm:ss}");
+                                        }
+                                        Console.WriteLine($"  Muted: {(userAccount.IsMuted ? $"Yes (until {userAccount.MutedUntil:yyyy-MM-dd HH:mm:ss})" : "No")}");
                                         Console.ResetColor();
                                     }
                                     else
@@ -559,6 +551,144 @@ namespace Chat_Room
                                 {
                                     Console.ForegroundColor = ConsoleColor.Red;
                                     Console.WriteLine("Usage: /history <username> [count]");
+                                    Console.ResetColor();
+                                }
+                            }
+                            break;
+
+                        case "/promote":
+                            if (parts.Length > 1)
+                            {
+                                var username = parts[1].Trim();
+                                if (_userManager.UserExists(username))
+                                {
+                                    if (!_userManager.IsAdmin(username))
+                                    {
+                                        _userManager.PromoteToAdmin(username, "SERVER");
+                                        lock (_consoleLock)
+                                        {
+                                            Console.ForegroundColor = ConsoleColor.Magenta;
+                                            Console.WriteLine($"[Promoted] {username} is now an admin");
+                                            Console.ResetColor();
+                                        }
+
+                                        if (_clients.ContainsKey(username))
+                                        {
+                                            await SendJsonAsync(_clients[username].GetStream(), "server",
+                                                "You have been promoted to admin! You now have access to admin commands.");
+                                        }
+
+                                        await BroadcastJsonAsync("server", $"{username} has been promoted to admin", null);
+                                    }
+                                    else
+                                    {
+                                        lock (_consoleLock)
+                                        {
+                                            Console.ForegroundColor = ConsoleColor.Yellow;
+                                            Console.WriteLine($"User '{username}' is already an admin");
+                                            Console.ResetColor();
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    lock (_consoleLock)
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.Red;
+                                        Console.WriteLine($"User '{username}' not found");
+                                        Console.ResetColor();
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                lock (_consoleLock)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine("Usage: /promote <username>");
+                                    Console.ResetColor();
+                                }
+                            }
+                            break;
+
+                        case "/demote":
+                            if (parts.Length > 1)
+                            {
+                                var username = parts[1].Trim();
+                                if (_userManager.UserExists(username))
+                                {
+                                    if (_userManager.IsAdmin(username))
+                                    {
+                                        _userManager.DemoteFromAdmin(username);
+                                        lock (_consoleLock)
+                                        {
+                                            Console.ForegroundColor = ConsoleColor.Yellow;
+                                            Console.WriteLine($"[Demoted] {username} is no longer an admin");
+                                            Console.ResetColor();
+                                        }
+
+                                        if (_clients.ContainsKey(username))
+                                        {
+                                            await SendJsonAsync(_clients[username].GetStream(), "server",
+                                                "You have been demoted from admin status.");
+                                        }
+
+                                        await BroadcastJsonAsync("server", $"{username} has been demoted from admin", null);
+                                    }
+                                    else
+                                    {
+                                        lock (_consoleLock)
+                                        {
+                                            Console.ForegroundColor = ConsoleColor.Yellow;
+                                            Console.WriteLine($"User '{username}' is not an admin");
+                                            Console.ResetColor();
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    lock (_consoleLock)
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.Red;
+                                        Console.WriteLine($"User '{username}' not found");
+                                        Console.ResetColor();
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                lock (_consoleLock)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine("Usage: /demote <username>");
+                                    Console.ResetColor();
+                                }
+                            }
+                            break;
+
+                        case "/admins":
+                            lock (_consoleLock)
+                            {
+                                var adminList = _userManager.GetAdmins();
+                                if (adminList.Count > 0)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Magenta;
+                                    Console.WriteLine($"\nServer Admins ({adminList.Count}):");
+                                    Console.WriteLine($"{"Username",-20} {"Promoted By",-15} {"Promoted Date",-20}");
+                                    Console.WriteLine(new string('-', 55));
+                                    foreach (var admin in adminList)
+                                    {
+                                        var status = _clients.ContainsKey(admin.Username) ? " (online)" : "";
+                                        var promotedBy = admin.PromotedBy ?? "SYSTEM";
+                                        var promotedDate = admin.PromotedDate?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown";
+                                        Console.WriteLine($"{admin.Username + status,-20} {promotedBy,-15} {promotedDate,-20}");
+                                    }
+                                    Console.ResetColor();
+                                }
+                                else
+                                {
+                                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                                    Console.WriteLine("No admins currently assigned");
                                     Console.ResetColor();
                                 }
                             }
@@ -946,7 +1076,8 @@ namespace Chat_Room
                 {
                     stats.AppendLine($"Total messages sent: {account.MessageCount}");
                     stats.AppendLine($"Account created: {account.CreatedDate:yyyy-MM-dd HH:mm:ss}");
-                    stats.Append($"Last login: {account.LastLogin:yyyy-MM-dd HH:mm:ss}");
+                    stats.AppendLine($"Last login: {account.LastLogin:yyyy-MM-dd HH:mm:ss}");
+                    stats.Append($"Admin status: {(account.IsAdmin ? "Yes" : "No")}");
                 }
                 await SendJsonAsync(stream, "command", stats.ToString());
                 lock (_consoleLock)
@@ -1000,6 +1131,7 @@ namespace Chat_Room
             }
             else if (command == "/help")
             {
+                var account = _userManager.GetUserAccount(clientId);
                 var helpText = new StringBuilder();
                 helpText.AppendLine("Available commands:");
                 helpText.AppendLine("  /help     - Show this help message");
@@ -1012,7 +1144,18 @@ namespace Chat_Room
                 helpText.AppendLine("  /time     - Show server time");
                 helpText.AppendLine("  /uptime   - Show server uptime");
                 helpText.AppendLine("  /say      - Sends a message to the server");
-                helpText.Append("  /exit     - Disconnect from the chat");
+                helpText.AppendLine("  /exit     - Disconnect from the chat");
+
+                // Add admin commands if user is an admin
+                if (account?.IsAdmin == true)
+                {
+                    helpText.AppendLine("\nAdmin Commands:");
+                    helpText.AppendLine("  /adminkick <username> - Kick a user from the server");
+                    helpText.AppendLine("  /adminmute <username> <minutes> - Mute a user");
+                    helpText.AppendLine("  /adminunmute <username> - Unmute a user");
+                    helpText.AppendLine("  /adminbroadcast <message> - Send an admin broadcast");
+                    helpText.Append("  /adminlist - List all server admins");
+                }
 
                 await SendJsonAsync(stream, "command", helpText.ToString());
                 lock (_consoleLock)
@@ -1054,6 +1197,199 @@ namespace Chat_Room
                     ClearCurrentLine();
                     Console.ForegroundColor = ConsoleColor.DarkGray;
                     Console.WriteLine($"[Command] {clientId} requested message history");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
+            }
+            // ADMIN COMMANDS FOR CLIENTS
+            else if (command == "/adminkick")
+            {
+                if (!_userManager.IsAdmin(clientId))
+                {
+                    await SendJsonAsync(stream, "command", "You must be an admin to use this command.");
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var username = message.Body.Trim();
+                    if (_clients.TryGetValue(username, out var targetClient))
+                    {
+                        await SendJsonAsync(targetClient.GetStream(), "server", $"You have been kicked by admin {clientId}.");
+                        targetClient.Close();
+                        _clients.TryRemove(username, out _);
+
+                        await SendJsonAsync(stream, "command", $"Successfully kicked {username}");
+                        await BroadcastJsonAsync("server", $"{username} was kicked by admin {clientId}", null);
+
+                        lock (_consoleLock)
+                        {
+                            ClearCurrentLine();
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.WriteLine($"[Admin Kick] {clientId} kicked {username}");
+                            Console.ResetColor();
+                            RestoreCurrentLine();
+                        }
+                    }
+                    else
+                    {
+                        await SendJsonAsync(stream, "command", $"User '{username}' not found or not connected");
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /adminkick <username>");
+                }
+            }
+            else if (command == "/adminmute")
+            {
+                if (!_userManager.IsAdmin(clientId))
+                {
+                    await SendJsonAsync(stream, "command", "You must be an admin to use this command.");
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var parts = message.Body.Split(' ', 2);
+                    if (parts.Length >= 2 && int.TryParse(parts[1], out int minutes))
+                    {
+                        var username = parts[0].Trim();
+                        if (_userManager.UserExists(username))
+                        {
+                            _userManager.MuteUser(username, minutes);
+                            await SendJsonAsync(stream, "command", $"Muted {username} for {minutes} minutes");
+
+                            if (_clients.ContainsKey(username))
+                            {
+                                await SendJsonAsync(_clients[username].GetStream(), "server",
+                                    $"You have been muted for {minutes} minutes by admin {clientId}");
+                            }
+
+                            lock (_consoleLock)
+                            {
+                                ClearCurrentLine();
+                                Console.ForegroundColor = ConsoleColor.Yellow;
+                                Console.WriteLine($"[Admin Mute] {clientId} muted {username} for {minutes} minutes");
+                                Console.ResetColor();
+                                RestoreCurrentLine();
+                            }
+                        }
+                        else
+                        {
+                            await SendJsonAsync(stream, "command", $"User '{username}' not found");
+                        }
+                    }
+                    else
+                    {
+                        await SendJsonAsync(stream, "command", "Usage: /adminmute <username> <minutes>");
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /adminmute <username> <minutes>");
+                }
+            }
+            else if (command == "/adminunmute")
+            {
+                if (!_userManager.IsAdmin(clientId))
+                {
+                    await SendJsonAsync(stream, "command", "You must be an admin to use this command.");
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var username = message.Body.Trim();
+                    if (_userManager.UserExists(username))
+                    {
+                        _userManager.UnmuteUser(username);
+                        await SendJsonAsync(stream, "command", $"Unmuted {username}");
+
+                        if (_clients.ContainsKey(username))
+                        {
+                            await SendJsonAsync(_clients[username].GetStream(), "server",
+                                $"You have been unmuted by admin {clientId}");
+                        }
+
+                        lock (_consoleLock)
+                        {
+                            ClearCurrentLine();
+                            Console.ForegroundColor = ConsoleColor.Green;
+                            Console.WriteLine($"[Admin Unmute] {clientId} unmuted {username}");
+                            Console.ResetColor();
+                            RestoreCurrentLine();
+                        }
+                    }
+                    else
+                    {
+                        await SendJsonAsync(stream, "command", $"User '{username}' not found");
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /adminunmute <username>");
+                }
+            }
+            else if (command == "/adminbroadcast")
+            {
+                if (!_userManager.IsAdmin(clientId))
+                {
+                    await SendJsonAsync(stream, "command", "You must be an admin to use this command.");
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    await BroadcastJsonAsync("server", $"[Admin {clientId}] {message.Body}", null);
+                    await SendJsonAsync(stream, "command", "Broadcast sent to all users");
+
+                    lock (_consoleLock)
+                    {
+                        ClearCurrentLine();
+                        Console.ForegroundColor = ConsoleColor.Blue;
+                        Console.WriteLine($"[Admin Broadcast] {clientId}: {message.Body}");
+                        Console.ResetColor();
+                        RestoreCurrentLine();
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /adminbroadcast <message>");
+                }
+            }
+            else if (command == "/adminlist")
+            {
+                if (!_userManager.IsAdmin(clientId))
+                {
+                    await SendJsonAsync(stream, "command", "You must be an admin to use this command.");
+                    return;
+                }
+
+                var adminList = _userManager.GetAdmins();
+                var response = new StringBuilder();
+
+                if (adminList.Count > 0)
+                {
+                    response.AppendLine($"Server Admins ({adminList.Count}):");
+                    foreach (var admin in adminList)
+                    {
+                        var status = _clients.ContainsKey(admin.Username) ? " (online)" : " (offline)";
+                        response.AppendLine($"  {admin.Username}{status}");
+                    }
+                }
+                else
+                {
+                    response.Append("No admins currently assigned");
+                }
+
+                await SendJsonAsync(stream, "command", response.ToString());
+
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[Command] {clientId} requested admin list");
                     Console.ResetColor();
                     RestoreCurrentLine();
                 }
