@@ -93,6 +93,11 @@ namespace Chat_Room
 
             var channel = _channels[channelName];
             
+            // If already a member, return true (already joined)
+            if (channel.IsMember(username))
+                return true;
+            
+            // Check if user is invited or is the owner
             if (!channel.IsInvited(username) && channel.Owner != username)
                 return false;
 
