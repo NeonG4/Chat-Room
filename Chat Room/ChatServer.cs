@@ -12,6 +12,7 @@ namespace Chat_Room
         private TcpListener? _listener;
         private readonly ConcurrentDictionary<string, TcpClient> _clients = new();
         private readonly UserManager _userManager = new();
+        private readonly ChannelManager _channelManager = new();
         private bool _isRunning;
         private int _port;
         private string _currentInput = "";
@@ -313,6 +314,9 @@ namespace Chat_Room
                                 Console.WriteLine("  /promote <username>       - Promote a user to admin");
                                 Console.WriteLine("  /demote <username>        - Demote an admin to regular user");
                                 Console.WriteLine("  /admins                   - List all server admins");
+                                Console.WriteLine("\n  Channel Management:");
+                                Console.WriteLine("  /channels                 - List all private channels");
+                                Console.WriteLine("  /channelinfo <channel>    - Show detailed info about a channel");
                                 Console.WriteLine("\n  /stop                     - Stop the server");
                                 Console.ResetColor();
                             }
@@ -678,7 +682,7 @@ namespace Chat_Room
                                     Console.WriteLine(new string('-', 55));
                                     foreach (var admin in adminList)
                                     {
-                                        var status = _clients.ContainsKey(admin.Username) ? " (online)" : "";
+                                        var status = _clients.ContainsKey(admin.Username) ? " (online)" : " (offline)";
                                         var promotedBy = admin.PromotedBy ?? "SYSTEM";
                                         var promotedDate = admin.PromotedDate?.ToString("yyyy-MM-dd HH:mm") ?? "Unknown";
                                         Console.WriteLine($"{admin.Username + status,-20} {promotedBy,-15} {promotedDate,-20}");
@@ -689,6 +693,92 @@ namespace Chat_Room
                                 {
                                     Console.ForegroundColor = ConsoleColor.DarkGray;
                                     Console.WriteLine("No admins currently assigned");
+                                    Console.ResetColor();
+                                }
+                            }
+                            break;
+
+                        case "/channels":
+                            lock (_consoleLock)
+                            {
+                                var allUsers = _userManager.GetAllUsers();
+                                var channelList = new List<PrivateChannel>();
+                                foreach (var user in allUsers)
+                                {
+                                    channelList.AddRange(_channelManager.GetUserChannels(user.Username));
+                                }
+                                
+                                var uniqueChannels = channelList.DistinctBy(c => c.ChannelName).ToList();
+                                
+                                if (uniqueChannels.Count > 0)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Cyan;
+                                    Console.WriteLine($"\nPrivate Channels ({uniqueChannels.Count}):");
+                                    Console.WriteLine($"{"Channel Name",-25} {"Owner",-20} {"Members",-10}");
+                                    Console.WriteLine(new string('-', 55));
+                                    foreach (var channel in uniqueChannels)
+                                    {
+                                        Console.WriteLine($"{channel.ChannelName,-25} {channel.Owner,-20} {channel.Members.Count,-10}");
+                                    }
+                                    Console.ResetColor();
+                                }
+                                else
+                                {
+                                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                                    Console.WriteLine("No private channels exist");
+                                    Console.ResetColor();
+                                }
+                            }
+                            break;
+
+                        case "/channelinfo":
+                            if (parts.Length > 1)
+                            {
+                                var channelName = parts[1].Trim();
+                                var channel = _channelManager.GetChannel(channelName);
+
+                                lock (_consoleLock)
+                                {
+                                    if (channel != null)
+                                    {
+                                        Console.ForegroundColor = ConsoleColor.Cyan;
+                                        Console.WriteLine($"\nChannel: {channel.ChannelName}");
+                                        Console.WriteLine($"  Owner: {channel.Owner}");
+                                        Console.WriteLine($"  Created: {channel.CreatedDate:yyyy-MM-dd HH:mm:ss}");
+                                        Console.WriteLine($"  Members ({channel.Members.Count}):");
+                                        foreach (var member in channel.Members)
+                                        {
+                                            var status = _clients.ContainsKey(member) ? " (online)" : "";
+                                            Console.WriteLine($"    - {member}{status}");
+                                        }
+                                        if (channel.InvitedUsers.Count > 0)
+                                        {
+                                            Console.WriteLine($"  Invited Users ({channel.InvitedUsers.Count}):");
+                                            foreach (var invited in channel.InvitedUsers)
+                                            {
+                                                Console.WriteLine($"    - {invited}");
+                                            }
+                                        }
+                                        Console.WriteLine($"  Total messages: {channel.MessageHistory.Count}");
+                                        Console.ResetColor();
+                                    }
+                                    else
+                                    {
+                                        lock (_consoleLock)
+                                        {
+                                            Console.ForegroundColor = ConsoleColor.Red;
+                                            Console.WriteLine($"Channel '{channelName}' not found");
+                                            Console.ResetColor();
+                                        }
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                lock (_consoleLock)
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Red;
+                                    Console.WriteLine("Usage: /channelinfo <channelname>");
                                     Console.ResetColor();
                                 }
                             }
@@ -1077,7 +1167,7 @@ namespace Chat_Room
                     stats.AppendLine($"Total messages sent: {account.MessageCount}");
                     stats.AppendLine($"Account created: {account.CreatedDate:yyyy-MM-dd HH:mm:ss}");
                     stats.AppendLine($"Last login: {account.LastLogin:yyyy-MM-dd HH:mm:ss}");
-                    stats.Append($"Admin status: {(account.IsAdmin ? "Yes" : "No")}");
+                    stats.AppendLine($"Admin status: {(account.IsAdmin ? "Yes" : "No")}");
                 }
                 await SendJsonAsync(stream, "command", stats.ToString());
                 lock (_consoleLock)
@@ -1145,6 +1235,16 @@ namespace Chat_Room
                 helpText.AppendLine("  /uptime   - Show server uptime");
                 helpText.AppendLine("  /say      - Sends a message to the server");
                 helpText.AppendLine("  /exit     - Disconnect from the chat");
+                helpText.AppendLine("\nChannel Commands:");
+                helpText.AppendLine("  /createchannel <name> - Create a new private channel");
+                helpText.AppendLine("  /invite <channel> <username> - Invite a user to your channel");
+                helpText.AppendLine("  /joinchannel <name> - Join a channel you were invited to");
+                helpText.AppendLine("  /leavechannel <name> - Leave a channel");
+                helpText.AppendLine("  /deletechannel <name> - Delete a channel you own");
+                helpText.AppendLine("  /channelmsg <channel> <message> - Send message to a channel");
+                helpText.AppendLine("  /mychannels - List your channels");
+                helpText.AppendLine("  /channelinvites - List your channel invitations");
+                helpText.AppendLine("  /channelmembers <name> - List members of a channel");
 
                 // Add admin commands if user is an admin
                 if (account?.IsAdmin == true)
@@ -1392,6 +1492,353 @@ namespace Chat_Room
                     Console.WriteLine($"[Command] {clientId} requested admin list");
                     Console.ResetColor();
                     RestoreCurrentLine();
+                }
+            }
+            // CHANNEL COMMANDS
+            else if (command == "/createchannel")
+            {
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var channelName = message.Body.Trim();
+                    
+                    if (_channelManager.CreateChannel(channelName, clientId))
+                    {
+                        await SendJsonAsync(stream, "command", $"Channel '{channelName}' created successfully! You are the owner.");
+                        lock (_consoleLock)
+                        {
+                            ClearCurrentLine();
+                            Console.ForegroundColor = ConsoleColor.Green;
+                            Console.WriteLine($"[Channel] {clientId} created channel '{channelName}'");
+                            Console.ResetColor();
+                            RestoreCurrentLine();
+                        }
+                    }
+                    else
+                    {
+                        await SendJsonAsync(stream, "command", $"Failed to create channel. Channel '{channelName}' may already exist.");
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /createchannel <channelname>");
+                }
+            }
+            else if (command == "/invite")
+            {
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var parts = message.Body.Split(' ', 2);
+                    if (parts.Length >= 2)
+                    {
+                        var channelName = parts[0].Trim();
+                        var inviteUsername = parts[1].Trim();
+
+                        if (!_userManager.UserExists(inviteUsername))
+                        {
+                            await SendJsonAsync(stream, "command", $"User '{inviteUsername}' not found.");
+                            return;
+                        }
+
+                        if (_channelManager.InviteToChannel(channelName, inviteUsername, clientId))
+                        {
+                            await SendJsonAsync(stream, "command", $"Invited {inviteUsername} to channel '{channelName}'");
+                            
+                            if (_clients.ContainsKey(inviteUsername))
+                            {
+                                await SendJsonAsync(_clients[inviteUsername].GetStream(), "server", 
+                                    $"{clientId} invited you to join channel '{channelName}'. Use /joinchannel {channelName} to join.");
+                            }
+
+                            lock (_consoleLock)
+                            {
+                                ClearCurrentLine();
+                                Console.ForegroundColor = ConsoleColor.Cyan;
+                                Console.WriteLine($"[Channel] {clientId} invited {inviteUsername} to '{channelName}'");
+                                Console.ResetColor();
+                                RestoreCurrentLine();
+                            }
+                        }
+                        else
+                        {
+                            await SendJsonAsync(stream, "command", $"Failed to invite user. Check if channel exists and you are a member.");
+                        }
+                    }
+                    else
+                    {
+                        await SendJsonAsync(stream, "command", "Usage: /invite <channelname> <username>");
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /invite <channelname> <username>");
+                }
+            }
+            else if (command == "/joinchannel")
+            {
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var channelName = message.Body.Trim();
+                    
+                    if (_channelManager.JoinChannel(channelName, clientId))
+                    {
+                        await SendJsonAsync(stream, "command", $"Successfully joined channel '{channelName}'");
+                        
+                        var channel = _channelManager.GetChannel(channelName);
+                        if (channel != null)
+                        {
+                            foreach (var member in channel.Members)
+                            {
+                                if (member != clientId && _clients.ContainsKey(member))
+                                {
+                                    await SendJsonAsync(_clients[member].GetStream(), "channel", 
+                                        $"{clientId} joined the channel", channelName);
+                                }
+                            }
+                        }
+
+                        lock (_consoleLock)
+                        {
+                            ClearCurrentLine();
+                            Console.ForegroundColor = ConsoleColor.Green;
+                            Console.WriteLine($"[Channel] {clientId} joined channel '{channelName}'");
+                            Console.ResetColor();
+                            RestoreCurrentLine();
+                        }
+                    }
+                    else
+                    {
+                        await SendJsonAsync(stream, "command", $"Failed to join channel. You may not be invited or channel doesn't exist.");
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /joinchannel <channelname>");
+                }
+            }
+            else if (command == "/leavechannel")
+            {
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var channelName = message.Body.Trim();
+                    
+                    if (_channelManager.LeaveChannel(channelName, clientId))
+                    {
+                        await SendJsonAsync(stream, "command", $"Left channel '{channelName}'");
+                        
+                        var channel = _channelManager.GetChannel(channelName);
+                        if (channel != null)
+                        {
+                            foreach (var member in channel.Members)
+                            {
+                                if (_clients.ContainsKey(member))
+                                {
+                                    await SendJsonAsync(_clients[member].GetStream(), "channel", 
+                                        $"{clientId} left the channel", channelName);
+                                }
+                            }
+                        }
+
+                        lock (_consoleLock)
+                        {
+                            ClearCurrentLine();
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.WriteLine($"[Channel] {clientId} left channel '{channelName}'");
+                            Console.ResetColor();
+                            RestoreCurrentLine();
+                        }
+                    }
+                    else
+                    {
+                        await SendJsonAsync(stream, "command", $"Failed to leave channel. You may be the owner or not a member.");
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /leavechannel <channelname>");
+                }
+            }
+            else if (command == "/deletechannel")
+            {
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var channelName = message.Body.Trim();
+                    
+                    if (_channelManager.DeleteChannel(channelName, clientId))
+                    {
+                        await SendJsonAsync(stream, "command", $"Channel '{channelName}' deleted successfully");
+                        
+                        lock (_consoleLock)
+                        {
+                            ClearCurrentLine();
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.WriteLine($"[Channel] {clientId} deleted channel '{channelName}'");
+                            Console.ResetColor();
+                            RestoreCurrentLine();
+                        }
+                    }
+                    else
+                    {
+                        await SendJsonAsync(stream, "command", $"Failed to delete channel. You must be the owner.");
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /deletechannel <channelname>");
+                }
+            }
+            else if (command == "/channelmsg")
+            {
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var parts = message.Body.Split(' ', 2);
+                    if (parts.Length >= 2)
+                    {
+                        var channelName = parts[0].Trim();
+                        var channelMessage = parts[1];
+
+                        var channel = _channelManager.GetChannel(channelName);
+                        if (channel != null && channel.IsMember(clientId))
+                        {
+                            // Check if user is muted
+                            if (_userManager.IsUserMuted(clientId))
+                            {
+                                await SendJsonAsync(stream, "command", "You are currently muted and cannot send messages.");
+                                return;
+                            }
+
+                            _userManager.IncrementMessageCount(clientId);
+                            _channelManager.AddMessageToChannel(channelName, clientId, channelMessage);
+
+                            foreach (var member in channel.Members)
+                            {
+                                if (_clients.ContainsKey(member))
+                                {
+                                    await SendJsonAsync(_clients[member].GetStream(), "channelmessage", 
+                                        channelMessage, $"{clientId}@{channelName}");
+                                }
+                            }
+
+                            lock (_consoleLock)
+                            {
+                                ClearCurrentLine();
+                                Console.ForegroundColor = ConsoleColor.Magenta;
+                                Console.WriteLine($"[{channelName}] {clientId}: {channelMessage}");
+                                Console.ResetColor();
+                                RestoreCurrentLine();
+                            }
+                        }
+                        else
+                        {
+                            await SendJsonAsync(stream, "command", $"You are not a member of channel '{channelName}'");
+                        }
+                    }
+                    else
+                    {
+                        await SendJsonAsync(stream, "command", "Usage: /channelmsg <channelname> <message>");
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /channelmsg <channelname> <message>");
+                }
+            }
+            else if (command == "/mychannels")
+            {
+                var userChannels = _channelManager.GetUserChannels(clientId);
+                var response = new StringBuilder();
+
+                if (userChannels.Count > 0)
+                {
+                    response.AppendLine($"Your channels ({userChannels.Count}):");
+                    foreach (var channel in userChannels)
+                    {
+                        var ownerTag = channel.Owner == clientId ? " [OWNER]" : "";
+                        response.AppendLine($"  {channel.ChannelName}{ownerTag} - {channel.Members.Count} members");
+                    }
+                }
+                else
+                {
+                    response.Append("You are not a member of any channels. Use /createchannel to create one.");
+                }
+
+                await SendJsonAsync(stream, "command", response.ToString());
+
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[Command] {clientId} requested channel list");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
+            }
+            else if (command == "/channelinvites")
+            {
+                var invitations = _channelManager.GetUserInvitations(clientId);
+                var response = new StringBuilder();
+
+                if (invitations.Count > 0)
+                {
+                    response.AppendLine($"Channel invitations ({invitations.Count}):");
+                    foreach (var channel in invitations)
+                    {
+                        response.AppendLine($"  {channel.ChannelName} - owned by {channel.Owner}");
+                    }
+                    response.Append("Use /joinchannel <channelname> to join");
+                }
+                else
+                {
+                    response.Append("No pending channel invitations");
+                }
+
+                await SendJsonAsync(stream, "command", response.ToString());
+
+                lock (_consoleLock)
+                {
+                    ClearCurrentLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[Command] {clientId} requested channel invitations");
+                    Console.ResetColor();
+                    RestoreCurrentLine();
+                }
+            }
+            else if (command == "/channelmembers")
+            {
+                if (!string.IsNullOrWhiteSpace(message.Body))
+                {
+                    var channelName = message.Body.Trim();
+                    var channel = _channelManager.GetChannel(channelName);
+
+                    if (channel != null && channel.IsMember(clientId))
+                    {
+                        var response = new StringBuilder();
+                        response.AppendLine($"Members of '{channelName}' ({channel.Members.Count}):");
+                        foreach (var member in channel.Members)
+                        {
+                            var status = _clients.ContainsKey(member) ? " (online)" : " (offline)";
+                            var ownerTag = member == channel.Owner ? " [OWNER]" : "";
+                            response.AppendLine($"  {member}{ownerTag}{status}");
+                        }
+
+                        await SendJsonAsync(stream, "command", response.ToString());
+                    }
+                    else
+                    {
+                        await SendJsonAsync(stream, "command", $"Channel '{channelName}' not found or you are not a member.");
+                    }
+
+                    lock (_consoleLock)
+                    {
+                        ClearCurrentLine();
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.WriteLine($"[Command] {clientId} requested channel members");
+                        Console.ResetColor();
+                        RestoreCurrentLine();
+                    }
+                }
+                else
+                {
+                    await SendJsonAsync(stream, "command", "Usage: /channelmembers <channelname>");
                 }
             }
             else

@@ -175,6 +175,35 @@ namespace Chat_Room
                         Console.ResetColor();
                         break;
 
+                    case "channel":
+                        Console.ForegroundColor = ConsoleColor.Blue;
+                        Console.Write($"[{message.Username}]");
+                        Console.ResetColor();
+                        Console.WriteLine($" {message.Body}");
+                        break;
+
+                    case "channelmessage":
+                        if (!string.IsNullOrEmpty(message.Username))
+                        {
+                            var parts = message.Username.Split('@');
+                            if (parts.Length == 2)
+                            {
+                                var sender = parts[0];
+                                var channelName = parts[1];
+                                
+                                Console.ForegroundColor = ConsoleColor.Magenta;
+                                Console.Write($"[{channelName}] ");
+                                Console.ForegroundColor = ConsoleColor.Green;
+                                Console.Write(sender);
+                                Console.ResetColor();
+                                Console.WriteLine($": {message.Body}");
+                                
+                                // Play notification sound for channel messages
+                                try { Console.Beep(600, 100); } catch { }
+                            }
+                        }
+                        break;
+
                     default:
                         Console.WriteLine(message.Body);
                         break;
