@@ -1242,6 +1242,7 @@ namespace Chat_Room
                 helpText.AppendLine("  /leavechannel <name> - Leave a channel");
                 helpText.AppendLine("  /deletechannel <name> - Delete a channel you own");
                 helpText.AppendLine("  /channelmsg <channel> <message> - Send message to a channel");
+                helpText.AppendLine("  /openchannel <name> - Open separate window for a channel");
                 helpText.AppendLine("  /mychannels - List your channels");
                 helpText.AppendLine("  /channelinvites - List your channel invitations");
                 helpText.AppendLine("  /channelmembers <name> - List members of a channel");

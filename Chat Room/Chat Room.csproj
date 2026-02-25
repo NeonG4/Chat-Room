@@ -8,4 +8,11 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <Target Name="CopyChannelWindow" AfterTargets="Build">
+    <ItemGroup>
+      <ChannelWindowFiles Include="..\ChannelWindow\bin\$(Configuration)\net8.0\ChannelWindow.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ChannelWindowFiles)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

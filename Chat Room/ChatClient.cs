@@ -13,6 +13,9 @@ namespace Chat_Room
         private bool _isConnected;
         private string _currentInput = "";
         private readonly object _consoleLock = new object();
+        private ChannelWindowManager? _channelWindowManager;
+        private string _serverIp = "";
+        private int _serverPort = 0;
 
         public ChatClient(string username, string password)
         {
@@ -24,9 +27,15 @@ namespace Chat_Room
         {
             try
             {
+                _serverIp = serverIp;
+                _serverPort = port;
+                
                 _client = new TcpClient();
                 await _client.ConnectAsync(serverIp, port);
                 _stream = _client.GetStream();
+
+                // Initialize channel window manager
+                _channelWindowManager = new ChannelWindowManager(_username, SendChannelMessageAsync);
 
                 // Send authentication message
                 var authMessage = new ClientMessage
@@ -190,13 +199,20 @@ namespace Chat_Room
                             {
                                 var sender = parts[0];
                                 var channelName = parts[1];
-                                
-                                Console.ForegroundColor = ConsoleColor.Magenta;
-                                Console.Write($"[{channelName}] ");
-                                Console.ForegroundColor = ConsoleColor.Green;
-                                Console.Write(sender);
-                                Console.ResetColor();
-                                Console.WriteLine($": {message.Body}");
+
+                                if (_channelWindowManager != null && _channelWindowManager.IsChannelWindowOpen(channelName))
+                                {
+                                    _channelWindowManager.DisplayMessageInChannel(channelName, sender, message.Body ?? "");
+                                }
+                                else
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Magenta;
+                                    Console.Write($"[{channelName}] ");
+                                    Console.ForegroundColor = ConsoleColor.Green;
+                                    Console.Write(sender);
+                                    Console.ResetColor();
+                                    Console.WriteLine($": {message.Body}");
+                                }
                                 
                                 // Play notification sound for channel messages
                                 try { Console.Beep(600, 100); } catch { }
@@ -340,6 +356,14 @@ namespace Chat_Room
                     break;
                 }
 
+                // Check for channel window command
+                if (message.ToLower().StartsWith("/openchannel "))
+                {
+                    var channelName = message.Substring("/openchannel ".Length).Trim();
+                    await OpenChannelWindow(channelName);
+                    continue;
+                }
+
                 await SendMessageAsync(message);
             }
         }
@@ -347,9 +371,41 @@ namespace Chat_Room
         public void Disconnect()
         {
             _isConnected = false;
+            _channelWindowManager?.CloseAllChannels();
             _stream?.Close();
             _client?.Close();
             Console.WriteLine("Disconnected from server");
+        }
+
+        private async Task SendChannelMessageAsync(string channelName, string message)
+        {
+            if (!_isConnected || _stream == null)
+                return;
+
+            try
+            {
+                var clientMessage = new ClientMessage
+                {
+                    Command = "/channelmsg",
+                    Body = $"{channelName} {message}"
+                };
+
+                var jsonString = JsonSerializer.Serialize(clientMessage) + "\n";
+                var jsonBytes = Encoding.UTF8.GetBytes(jsonString);
+                await _stream.WriteAsync(jsonBytes);
+            }
+            catch
+            {
+                // Error sending message
+            }
+        }
+
+        public async Task OpenChannelWindow(string channelName)
+        {
+            if (_channelWindowManager != null)
+            {
+                await _channelWindowManager.OpenChannelWindow(channelName);
+            }
         }
     }
 }
