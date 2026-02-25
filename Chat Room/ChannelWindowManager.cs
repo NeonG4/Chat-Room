@@ -25,23 +25,35 @@ namespace Chat_Room
         private void FindChannelWindowExecutable()
         {
             var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            
             var possiblePaths = new[]
             {
                 Path.Combine(baseDir, "ChannelWindow.exe"),
                 Path.Combine(baseDir, "..", "ChannelWindow", "bin", "Debug", "net8.0", "ChannelWindow.exe"),
                 Path.Combine(baseDir, "..", "..", "ChannelWindow", "bin", "Debug", "net8.0", "ChannelWindow.exe"),
                 Path.Combine(baseDir, "..", "..", "..", "ChannelWindow", "bin", "Debug", "net8.0", "ChannelWindow.exe"),
+                Path.Combine(Directory.GetCurrentDirectory(), "ChannelWindow.exe"),
+                Path.Combine(Directory.GetCurrentDirectory(), "..", "ChannelWindow", "bin", "Debug", "net8.0", "ChannelWindow.exe"),
             };
 
             foreach (var path in possiblePaths)
             {
-                var fullPath = Path.GetFullPath(path);
-                if (File.Exists(fullPath))
+                try
                 {
-                    _channelWindowExePath = fullPath;
-                    return;
+                    var fullPath = Path.GetFullPath(path);
+                    if (File.Exists(fullPath))
+                    {
+                        _channelWindowExePath = fullPath;
+                        return;
+                    }
                 }
+                catch { }
             }
+
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"[Warning] ChannelWindow.exe not found in any expected location.");
+            Console.WriteLine($"[Warning] Searched base directory: {baseDir}");
+            Console.ResetColor();
         }
 
         public async Task OpenChannelWindow(string channelName)
@@ -57,12 +69,14 @@ namespace Chat_Room
             if (string.IsNullOrEmpty(_channelWindowExePath))
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("Channel window executable not found. Please build the ChannelWindow project.");
+                Console.WriteLine("ERROR: Channel window executable not found!");
+                Console.WriteLine($"Please ensure ChannelWindow.exe is in: {AppDomain.CurrentDomain.BaseDirectory}");
                 Console.ResetColor();
                 return;
             }
 
-            var pipeName = $"ChatRoom_Channel_{_username}_{channelName}_{Guid.NewGuid()}";
+            var pipeName = $"ChatRoom_Channel_{_username}_{channelName}_{Guid.NewGuid():N}";
+
             var pipeServer = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
 
             var process = new Process
@@ -78,7 +92,16 @@ namespace Chat_Room
 
             try
             {
-                process.Start();
+                var started = process.Start();
+                
+                if (!started)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("Failed to start channel window process");
+                    Console.ResetColor();
+                    pipeServer.Close();
+                    return;
+                }
 
                 var windowInfo = new ChannelWindowInfo
                 {
@@ -94,7 +117,7 @@ namespace Chat_Room
                 _ = MonitorProcessAsync(process, channelName);
 
                 Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"Opened new window for channel '{channelName}'");
+                Console.WriteLine($"? Opened channel window for '{channelName}'");
                 Console.ResetColor();
             }
             catch (Exception ex)

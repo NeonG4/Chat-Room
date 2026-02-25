@@ -32,8 +32,8 @@ namespace ChannelWindow
 
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("╔══════════════════════════════════════════════════════════════╗");
-            Console.WriteLine($"║  Channel: {_channelName,-48}                                 ║");
-            Console.WriteLine($"║  User: {_username,-51}                                       ║");
+            Console.WriteLine($"║  Channel: {_channelName,-48}║");
+            Console.WriteLine($"║  User: {_username,-51}║");
             Console.WriteLine("╚══════════════════════════════════════════════════════════════╝");
             Console.ResetColor();
             Console.WriteLine();

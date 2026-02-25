@@ -1,0 +1,48 @@
+# Channel Windows - Quick Start
+
+## How to Use Channel Windows
+
+### 1. Create and Join a Channel
+```
+/createchannel mychannel
+/joinchannel mychannel
+```
+
+### 2. Open a Separate Window for the Channel
+```
+/openchannel mychannel
+```
+
+This will launch a new console window dedicated to that channel!
+
+### 3. Using the Channel Window
+- Type messages directly in the channel window
+- All messages go straight to that channel
+- See only messages from that channel
+- Type `/exit` to close the window
+
+### 4. Multiple Channel Windows
+You can open multiple channel windows:
+```
+/openchannel work
+/openchannel gaming
+/openchannel friends
+```
+
+Each channel gets its own independent window!
+
+### Features
+- ? Separate console window per channel
+- ? Real-time message sync via named pipes
+- ? Color-coded messages (you = magenta, others = green)
+- ? Timestamps on all messages
+- ? Join/leave notifications
+- ? Auto-cleanup when closed
+
+### Troubleshooting
+If windows don't open:
+1. Make sure ChannelWindow.exe exists in the same folder as Chat Room.exe
+2. Check that you've joined the channel first with `/joinchannel`
+3. Rebuild both projects if needed
+
+The build system automatically copies ChannelWindow.exe to the output directory.

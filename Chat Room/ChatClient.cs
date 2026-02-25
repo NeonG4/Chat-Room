@@ -185,10 +185,40 @@ namespace Chat_Room
                         break;
 
                     case "channel":
-                        Console.ForegroundColor = ConsoleColor.Blue;
-                        Console.Write($"[{message.Username}]");
-                        Console.ResetColor();
-                        Console.WriteLine($" {message.Body}");
+                        if (!string.IsNullOrEmpty(message.Username))
+                        {
+                            var channelName = message.Username;
+                            if (_channelWindowManager != null && _channelWindowManager.IsChannelWindowOpen(channelName))
+                            {
+                                if (message.Body?.Contains("joined") == true)
+                                {
+                                    var username = message.Body.Split(' ')[0];
+                                    _channelWindowManager.DisplayJoinInChannel(channelName, username);
+                                }
+                                else if (message.Body?.Contains("left") == true)
+                                {
+                                    var username = message.Body.Split(' ')[0];
+                                    _channelWindowManager.DisplayLeaveInChannel(channelName, username);
+                                }
+                                else
+                                {
+                                    _channelWindowManager.DisplaySystemMessageInChannel(channelName, message.Body ?? "");
+                                }
+                            }
+                            else
+                            {
+                                Console.ForegroundColor = ConsoleColor.Blue;
+                                Console.Write($"[{channelName}]");
+                                Console.ResetColor();
+                                Console.WriteLine($" {message.Body}");
+                            }
+                        }
+                        else
+                        {
+                            Console.ForegroundColor = ConsoleColor.Blue;
+                            Console.WriteLine($"[CHANNEL] {message.Body}");
+                            Console.ResetColor();
+                        }
                         break;
 
                     case "channelmessage":
@@ -360,7 +390,16 @@ namespace Chat_Room
                 if (message.ToLower().StartsWith("/openchannel "))
                 {
                     var channelName = message.Substring("/openchannel ".Length).Trim();
-                    await OpenChannelWindow(channelName);
+                    if (string.IsNullOrWhiteSpace(channelName))
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine("Usage: /openchannel <channelname>");
+                        Console.ResetColor();
+                    }
+                    else
+                    {
+                        await OpenChannelWindow(channelName);
+                    }
                     continue;
                 }
 
